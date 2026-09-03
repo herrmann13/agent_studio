@@ -11,3 +11,7 @@ export function CopySkill(arg1:string,arg2:string):Promise<domain.DiscoveryResul
 export function DeleteSkill(arg1:string):Promise<domain.DiscoveryResult>;
 
 export function DiscoverLocalEnvironment():Promise<domain.DiscoveryResult>;
+
+export function RemoveProject(arg1:string):Promise<domain.DiscoveryResult>;
+
+export function SelectProjectFolder():Promise<string>;

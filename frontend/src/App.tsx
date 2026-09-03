@@ -1,13 +1,15 @@
-import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
-import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment} from '../wailsjs/go/main/App';
+import {Component, ErrorInfo, ReactNode, useEffect, useState} from 'react';
+import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
 import {domain} from '../wailsjs/go/models';
 import './App.css';
 
 function App() {
     const [workspace, setWorkspace] = useState<domain.DiscoveryResult>();
-    const [projectPath, setProjectPath] = useState('');
+    const [selectedProjectPath, setSelectedProjectPath] = useState('');
     const [draggedSkill, setDraggedSkill] = useState<domain.Skill>();
     const [contextSkill, setContextSkill] = useState<domain.Skill>();
+    const [addSkillTarget, setAddSkillTarget] = useState<domain.Scope>();
+    const [skillSearch, setSkillSearch] = useState('');
     const [message, setMessage] = useState<string>();
     const [isLoading, setIsLoading] = useState(true);
 
@@ -25,15 +27,15 @@ function App() {
 
     useEffect(() => { void refresh(); }, []);
 
-    async function addProject(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        if (!projectPath.trim()) return;
+    async function selectProject() {
         try {
-            setWorkspace(normalizeWorkspace(await AddProject(projectPath.trim())));
-            setProjectPath('');
+            const path = await SelectProjectFolder();
+            if (!path) return;
+            setSelectedProjectPath(path);
+            setWorkspace(normalizeWorkspace(await AddProject(path)));
             setMessage(undefined);
         } catch (error) {
-            setMessage(error instanceof Error ? error.message : 'Could not add project.');
+            setMessage(error instanceof Error ? error.message : 'Could not select project.');
         }
     }
 
@@ -60,6 +62,25 @@ function App() {
         }
     }
 
+    async function removeProject(project: domain.Project) {
+        if (!window.confirm(`Stop tracking "${project.name}"? The project and its skills will not be deleted.`)) return;
+        try {
+            setWorkspace(normalizeWorkspace(await RemoveProject(project.id)));
+            setMessage(`${project.name} is no longer tracked.`);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not stop tracking project.');
+        }
+    }
+
+    async function addSkillToProject(skill: domain.Skill, target: domain.Scope) {
+        try {
+            setWorkspace(normalizeWorkspace(await CopySkill(skill.path, target.id)));
+            setMessage(`${skill.name} was copied to ${target.name}.`);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not add skill to project.');
+        }
+    }
+
     const scopes = workspace?.scopes ?? [];
     const globalScope = scopes.find((scope) => scope.kind === 'global');
     const agentScopes = scopes.filter((scope) => scope.kind === 'agent');
@@ -83,11 +104,11 @@ function App() {
                 <p className="read-only-note">Filesystem writes only happen when you drop a skill into a destination or confirm Delete.</p>
             </section>
 
-            <form className="project-form" onSubmit={addProject}>
-                <label htmlFor="project-path">Track a project</label>
-                <input id="project-path" value={projectPath} onChange={(event) => setProjectPath(event.target.value)} placeholder="/path/to/project"/>
-                <button type="submit">Add project</button>
-            </form>
+            <section className="project-form">
+                <div><label>Track a project</label><span>Select a folder to scan its project skills.</span></div>
+                <button type="button" onClick={() => void selectProject()}>Select project folder</button>
+                {selectedProjectPath ? <div className="selected-project"><span>Selected project</span><code title={selectedProjectPath}>{selectedProjectPath}</code></div> : null}
+            </section>
 
             {message ? <p className="workspace-message">{message}</p> : null}
 
@@ -102,7 +123,10 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading label="PROJECT LAYERS" title="Selected projects"/>
                 {projectScopes.length ? <div className="scope-grid project-grid">
-                    {projectScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextSkill={setContextSkill}/>) }
+                    {projectScopes.map((scope) => {
+                        const project = workspace?.projects.find((item) => item.id === scope.id.replace('project:', ''));
+                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextSkill={setContextSkill} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
+                    })}
                 </div> : <p className="empty-projects">Add a project path to create its `.agents/skills` destination.</p>}
             </section>
 
@@ -110,19 +134,43 @@ function App() {
                 <strong>{contextSkill.name}</strong>
                 <button role="menuitem" onClick={() => void deleteSkill(contextSkill)}>Delete skill</button>
             </div> : null}
+
+            {addSkillTarget ? <AddSkillModal
+                target={addSkillTarget}
+                skills={workspace?.skills ?? []}
+                search={skillSearch}
+                onSearch={setSkillSearch}
+                onAdd={(skill) => void addSkillToProject(skill, addSkillTarget)}
+                onClose={() => setAddSkillTarget(undefined)}
+            /> : null}
         </main>
     );
 }
 
-function ScopeLane({scope, skills, draggedSkill, onDragStart, onDrop, onContextSkill}: {
+function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextSkill, onRemoveProject, onAddSkill}: {
     scope: domain.Scope;
+    project?: domain.Project;
     skills: domain.Skill[];
     draggedSkill: domain.Skill | undefined;
     onDragStart: (skill: domain.Skill) => void;
     onDrop: (scope: domain.Scope) => void;
     onContextSkill: (skill: domain.Skill) => void;
+    onRemoveProject?: () => void;
+    onAddSkill?: () => void;
 }) {
     const [isDropTarget, setIsDropTarget] = useState(false);
+    const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
+    const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+
+    function toggleSkill(skillID: string) {
+        setExpandedSkills((current) => {
+            const next = new Set(current);
+            if (next.has(skillID)) next.delete(skillID);
+            else next.add(skillID);
+            return next;
+        });
+    }
+
     return <section
         className={`scope-lane ${isDropTarget ? 'is-drop-target' : ''}`}
         onDragOver={(event) => { event.preventDefault(); setIsDropTarget(Boolean(draggedSkill && draggedSkill.scopeId !== scope.id)); }}
@@ -131,15 +179,32 @@ function ScopeLane({scope, skills, draggedSkill, onDragStart, onDrop, onContextS
     >
         <div className="scope-heading">
             <div><span className={`scope-icon ${scope.kind}`}>{scope.kind === 'global' ? 'G' : scope.kind === 'agent' ? scope.name.slice(0, 1) : 'P'}</span><strong>{scope.name}</strong></div>
-            <span>{skills.length}</span>
+            <div className="scope-actions">
+                <span>{skills.length}</span>
+                {scope.kind === 'project' && onRemoveProject ? <div className="project-menu-wrap">
+                    <button className="project-menu-button" type="button" aria-label={`Project menu for ${scope.name}`} aria-expanded={projectMenuOpen} onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((open) => !open); }}>⋮</button>
+                    {projectMenuOpen ? <div className="project-menu" role="menu" onClick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onAddSkill?.(); }}>Add skill</button><button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onRemoveProject(); }}>Stop tracking</button></div> : null}
+                </div> : null}
+            </div>
         </div>
         <p className="scope-kind">{scope.kind === 'project' ? 'Project skills' : scope.kind === 'global' ? 'Shared skills' : 'Agent skills'}</p>
+        {project ? <code className="project-path" title={project.path}>{project.path}</code> : null}
         <div className="skill-stack">
-            {skills.map((skill) => <article className="skill-card" key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextSkill(skill); }}>
-                <div className="skill-card-heading"><strong>{skill.name}</strong><span className="drag-handle" aria-label="Drag to copy">::</span></div>
-                <p>{skill.description}</p>
-                <div className="skill-states">{(skill.states ?? []).map((state) => <span className={state} key={state}>{state}</span>)}</div>
-            </article>)}
+            {skills.map((skill) => {
+                const isExpanded = expandedSkills.has(skill.id);
+                return <article className={`skill-card ${isExpanded ? 'is-expanded' : ''}`} key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextSkill(skill); }}>
+                    <button className="skill-card-toggle" type="button" aria-expanded={isExpanded} onClick={() => toggleSkill(skill.id)}>
+                        <strong>{skill.name}</strong>
+                        <span className="skill-card-action"><span className="skill-state-count">{skill.states?.length ?? 0}</span><span className="expand-icon" aria-hidden="true">{isExpanded ? '−' : '+'}</span></span>
+                    </button>
+                    {isExpanded ? <div className="skill-card-details">
+                        <p>{skill.description}</p>
+                        <small>{skill.path}</small>
+                        <div className="skill-states">{(skill.states ?? []).map((state) => <span className={state} key={state}>{state}</span>)}</div>
+                    </div> : null}
+                    <span className="drag-handle" aria-label="Drag to copy">::</span>
+                </article>;
+            })}
             {!skills.length ? <p className="lane-placeholder">Drop a skill here to copy it.</p> : null}
         </div>
     </section>;
@@ -151,6 +216,33 @@ function SectionHeading({label, title}: {label: string; title: string}) {
 
 function Metric({value, label}: {value: number; label: string}) {
     return <div className="metric"><strong>{value}</strong><span>{label}</span></div>;
+}
+
+function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
+    target: domain.Scope;
+    skills: domain.Skill[];
+    search: string;
+    onSearch: (value: string) => void;
+    onAdd: (skill: domain.Skill) => void;
+    onClose: () => void;
+}) {
+    const normalizedSearch = search.trim().toLowerCase();
+    const targetNames = new Set(skills.filter((skill) => skill.scopeId === target.id).map((skill) => skill.name.toLowerCase()));
+    const availableSkills = skills.filter((skill) => !normalizedSearch || `${skill.name} ${skill.description}`.toLowerCase().includes(normalizedSearch));
+
+    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+        <section className="skill-modal" role="dialog" aria-modal="true" aria-labelledby="add-skill-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><div><p className="section-kicker">PROJECT SKILLS</p><h2 id="add-skill-title">Add skill to {target.name}</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose}>×</button></div>
+            <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search skills by name or description" autoFocus/>
+            <div className="modal-skill-list">
+                {availableSkills.map((skill) => {
+                    const alreadyAdded = targetNames.has(skill.name.toLowerCase());
+                    return <article className="modal-skill-row" key={`${skill.id}-${skill.scopeId}`}><div><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.scopeId}</small></div><button type="button" disabled={alreadyAdded} onClick={() => onAdd(skill)}>{alreadyAdded ? 'Added' : 'Add'}</button></article>;
+                })}
+                {!availableSkills.length ? <p className="empty-state">No skills match your search.</p> : null}
+            </div>
+        </section>
+    </div>;
 }
 
 function skillsInScope(workspace: domain.DiscoveryResult | undefined, scopeID: string) {

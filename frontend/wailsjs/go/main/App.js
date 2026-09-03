@@ -21,3 +21,11 @@ export function DeleteSkill(arg1) {
 export function DiscoverLocalEnvironment() {
   return window['go']['main']['App']['DiscoverLocalEnvironment']();
 }
+
+export function RemoveProject(arg1) {
+  return window['go']['main']['App']['RemoveProject'](arg1);
+}
+
+export function SelectProjectFolder() {
+  return window['go']['main']['App']['SelectProjectFolder']();
+}

@@ -6,6 +6,7 @@ import (
 
 	"agent-studio/internal/application"
 	"agent-studio/internal/domain"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // App struct
@@ -42,6 +43,23 @@ func (a *App) DiscoverLocalEnvironment() (domain.DiscoveryResult, error) {
 // AddProject starts tracking a project skill directory without modifying the project.
 func (a *App) AddProject(path string) (domain.DiscoveryResult, error) {
 	return a.discovery.AddProject(path)
+}
+
+// RemoveProject stops tracking a project without deleting any project files.
+func (a *App) RemoveProject(projectID string) (domain.DiscoveryResult, error) {
+	return a.discovery.RemoveProject(projectID)
+}
+
+// SelectProjectFolder opens the native directory picker used to choose a project.
+func (a *App) SelectProjectFolder() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("application is not ready")
+	}
+	return runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title:                "Select a project folder",
+		CanCreateDirectories: false,
+		ShowHiddenFiles:      true,
+	})
 }
 
 // CopySkill copies a complete skill directory into an explicit destination scope.

@@ -72,6 +72,32 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	}
 }
 
+func TestRemoveProjectStopsTrackingWithoutDeletingProjectFiles(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	skill := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, skill, "# Testing\n")
+
+	service := NewDiscoveryService(home)
+	result, err := service.AddProject(project)
+	if err != nil {
+		t.Fatalf("AddProject() error = %v", err)
+	}
+	if _, err := service.RemoveProject(result.Projects[0].ID); err != nil {
+		t.Fatalf("RemoveProject() error = %v", err)
+	}
+	updated, err := service.Discover()
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(updated.Projects) != 0 {
+		t.Fatalf("projects = %d, want 0", len(updated.Projects))
+	}
+	if _, err := os.Stat(skill); err != nil {
+		t.Fatalf("project skill was deleted: %v", err)
+	}
+}
+
 func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

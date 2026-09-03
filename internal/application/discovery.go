@@ -109,6 +109,27 @@ func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, erro
 	return s.Discover()
 }
 
+// RemoveProject stops tracking a project without modifying its directory or skills.
+func (s *DiscoveryService) RemoveProject(projectID string) (domain.DiscoveryResult, error) {
+	projects := s.loadProjects()
+	filtered := make([]domain.Project, 0, len(projects))
+	found := false
+	for _, project := range projects {
+		if project.ID == projectID {
+			found = true
+			continue
+		}
+		filtered = append(filtered, project)
+	}
+	if !found {
+		return domain.DiscoveryResult{}, fmt.Errorf("project is not being tracked")
+	}
+	if err := s.saveProjects(filtered); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	return s.Discover()
+}
+
 // CopySkill copies the complete skill directory to a selected scope. The source remains unchanged.
 func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult, error) {
 	workspace, err := s.Discover()
