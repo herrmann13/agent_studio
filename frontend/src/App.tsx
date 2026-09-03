@@ -1,6 +1,9 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
 import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
+import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
+import codexIcon from './assets/agents/Codex Logo - Colored - zonalogo.com.svg';
+import openCodeIcon from './assets/agents/opencode-logo-light.svg';
 import './App.css';
 
 function App() {
@@ -8,6 +11,8 @@ function App() {
     const [selectedProjectPath, setSelectedProjectPath] = useState('');
     const [draggedSkill, setDraggedSkill] = useState<domain.Skill>();
     const [contextMenu, setContextMenu] = useState<{skill: domain.Skill; x: number; y: number}>();
+    const [pendingDeletion, setPendingDeletion] = useState<domain.Skill>();
+    const [isDeleting, setIsDeleting] = useState(false);
     const [addSkillTarget, setAddSkillTarget] = useState<domain.Scope>();
     const [skillSearch, setSkillSearch] = useState('');
     const [message, setMessage] = useState<string>();
@@ -67,14 +72,22 @@ function App() {
         }
     }
 
-    async function deleteSkill(skill: domain.Skill) {
+    function requestSkillDeletion(skill: domain.Skill) {
         setContextMenu(undefined);
-        if (!window.confirm(`Delete "${skill.name}" from this location? A backup will be created first.`)) return;
+        setPendingDeletion(skill);
+    }
+
+    async function deleteSkill() {
+        if (!pendingDeletion) return;
+        setIsDeleting(true);
         try {
-            setWorkspace(normalizeWorkspace(await DeleteSkill(skill.path)));
-            setMessage(`Deleted ${skill.name}. A backup was created locally.`);
+            setWorkspace(normalizeWorkspace(await DeleteSkill(pendingDeletion.path)));
+            setMessage(`Deleted ${pendingDeletion.name}.`);
+            setPendingDeletion(undefined);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not delete skill.');
+        } finally {
+            setIsDeleting(false);
         }
     }
 
@@ -162,19 +175,10 @@ function App() {
         <main className="studio-shell" onClick={() => contextMenu && setContextMenu(undefined)}>
             <header className="studio-header">
                 <div>
-                    <p className="eyebrow">SKILL WORKSPACE</p>
                     <h1>Agent Studio</h1>
-                    <p className="intro">Copy skills between global, agent, and project locations. Nothing moves or deletes implicitly.</p>
                 </div>
                 <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" type="button" onClick={() => void checkForUpdates()} disabled={isCheckingForUpdates}>{isCheckingForUpdates ? 'Checking...' : 'Check updates'}</button><button className="refresh-button" type="button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
             </header>
-
-            <section className="workspace-summary">
-                <Metric value={workspace?.skills.length ?? 0} label="Skill locations"/>
-                <Metric value={workspace?.projects.length ?? 0} label="Tracked projects"/>
-                <Metric value={workspace?.skills.filter((skill) => skill.states.includes('conflict')).length ?? 0} label="Conflicts"/>
-                <p className="read-only-note">Filesystem writes only happen when you drop a skill into a destination or confirm Delete.</p>
-            </section>
 
             <section className="project-form">
                 <div><label>Track a project</label><span>Select a folder to scan its project skills.</span></div>
@@ -185,7 +189,7 @@ function App() {
             {message ? <p className="workspace-message">{message}</p> : null}
 
             <section className="workspace-section">
-                <SectionHeading label="BASE LAYERS" title="Global and agents"/>
+                <SectionHeading label="" title="Global and agents"/>
                 <div className="scope-grid">
                     {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/> : null}
                     {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/>) }
@@ -203,7 +207,7 @@ function App() {
             </section>
 
             {contextMenu ? <div className="context-menu" role="menu" style={{left: contextMenu.x, top: contextMenu.y}} onClick={(event) => event.stopPropagation()}>
-                <button type="button" role="menuitem" onClick={() => void deleteSkill(contextMenu.skill)}>Delete skill</button>
+                <button type="button" role="menuitem" onClick={() => requestSkillDeletion(contextMenu.skill)}>Delete skill</button>
                 <strong>{contextMenu.skill.name}</strong>
             </div> : null}
 
@@ -217,6 +221,7 @@ function App() {
             /> : null}
             {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
             {availableUpdate ? <UpdateDialog update={availableUpdate} isUpdating={isUpdating} onInstall={() => void installUpdate()} onClose={() => { if (!isUpdating) setAvailableUpdate(undefined); }}/> : null}
+            {pendingDeletion ? <DeleteSkillDialog skill={pendingDeletion} isDeleting={isDeleting} onDelete={() => void deleteSkill()} onClose={() => { if (!isDeleting) setPendingDeletion(undefined); }}/> : null}
         </main>
     );
 }
@@ -235,6 +240,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
     const [isDropTarget, setIsDropTarget] = useState(false);
     const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
     const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+    const iconSource = scopeIcon(scope);
 
     function toggleSkill(skillID: string) {
         setExpandedSkills((current) => {
@@ -252,7 +258,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
         onDrop={(event) => { event.preventDefault(); setIsDropTarget(false); onDrop(scope); }}
     >
         <div className="scope-heading">
-            <div><span className={`scope-icon ${scope.kind}`}>{scope.kind === 'global' ? 'G' : scope.kind === 'agent' ? scope.name.slice(0, 1) : 'P'}</span><strong>{scope.name}</strong></div>
+            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? '🌎' : 'P'}</span><strong>{scope.name}</strong></div>
             <div className="scope-actions">
                 <span>{skills.length}</span>
                 {scope.kind === 'project' && onRemoveProject ? <div className="project-menu-wrap">
@@ -282,6 +288,13 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
             {!skills.length ? <p className="lane-placeholder">Drop a skill here to copy it.</p> : null}
         </div>
     </section>;
+}
+
+function scopeIcon(scope: domain.Scope) {
+    if (scope.id === 'claude') return claudeIcon;
+    if (scope.id === 'codex') return codexIcon;
+    if (scope.id === 'opencode') return openCodeIcon;
+    return undefined;
 }
 
 function SectionHeading({label, title}: {label: string; title: string}) {
@@ -356,6 +369,22 @@ function UpdateDialog({update, isUpdating, onInstall, onClose}: {
             <p className="install-help">You are using {update.currentVersion}. The installer will be downloaded, verified, and installed automatically.</p>
             {update.releaseNotes ? <pre className="update-notes">{update.releaseNotes}</pre> : null}
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isUpdating}>Later</button><button type="button" className="install-submit" onClick={onInstall} disabled={isUpdating}>{isUpdating ? 'Installing...' : 'Download and install'}</button></div>
+        </section>
+    </div>;
+}
+
+function DeleteSkillDialog({skill, isDeleting, onDelete, onClose}: {
+    skill: domain.Skill;
+    isDeleting: boolean;
+    onDelete: () => void;
+    onClose: () => void;
+}) {
+    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+        <section className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><div><p className="section-kicker">DELETE SKILL</p><h2 id="delete-skill-title">Delete {skill.name}?</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
+            <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>
+            <code title={skill.path}>{skill.path}</code>
+            <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button><button type="button" className="delete-confirm" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete skill'}</button></div>
         </section>
     </div>;
 }

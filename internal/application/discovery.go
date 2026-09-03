@@ -160,7 +160,7 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	return s.Discover()
 }
 
-// DeleteSkill creates a backup then removes the selected skill directory. The caller must confirm this action.
+// DeleteSkill permanently removes the selected skill directory. The caller must confirm this action.
 func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
 	workspace, err := s.Discover()
 	if err != nil {
@@ -171,10 +171,6 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 		return domain.DiscoveryResult{}, err
 	}
 	sourceDir := filepath.Dir(skill.Path)
-	backup := filepath.Join(s.home, ".agent-studio", "backups", time.Now().UTC().Format("20060102T150405Z"), filepath.Base(sourceDir))
-	if err := copyDirectory(sourceDir, backup); err != nil {
-		return domain.DiscoveryResult{}, fmt.Errorf("back up skill before deletion: %w", err)
-	}
 	if err := os.RemoveAll(sourceDir); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
 	}

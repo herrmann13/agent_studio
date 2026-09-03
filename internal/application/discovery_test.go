@@ -58,10 +58,6 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 	if _, err := os.Stat(destination); err != nil {
 		t.Fatalf("agent skill was deleted: %v", err)
 	}
-	backups, err := filepath.Glob(filepath.Join(home, ".agent-studio", "backups", "*", "testing", "SKILL.md"))
-	if err != nil || len(backups) != 1 {
-		t.Fatalf("backup was not created: %v", err)
-	}
 }
 
 func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {

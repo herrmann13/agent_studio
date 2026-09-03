@@ -90,7 +90,7 @@ func (a *App) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult
 	return a.discovery.CopySkill(skillPath, targetScopeID)
 }
 
-// DeleteSkill removes a skill after the frontend obtains explicit confirmation.
+// DeleteSkill permanently removes a skill after the frontend obtains explicit confirmation.
 func (a *App) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
 	return a.discovery.DeleteSkill(skillPath)
 }
