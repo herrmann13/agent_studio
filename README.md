@@ -9,6 +9,21 @@ Local-first desktop companion for configuring skills and profiles for OpenCode, 
 
 ## Development
 
+Install the frontend dependencies with Bun:
+
+```sh
+bun install --frozen-lockfile
+```
+
+Run the frontend independently when needed:
+
+```sh
+bun run dev
+bun run build
+```
+
+Run the desktop application with Wails:
+
 ```sh
 wails dev
 ```
@@ -18,6 +33,8 @@ Use the Wails binary installed by Go if it is not in your `PATH`:
 ```sh
 "$(go env GOPATH)/bin/wails" dev
 ```
+
+The frontend uses Bun. Do not create or update `package-lock.json`.
 
 ## Architecture
 
