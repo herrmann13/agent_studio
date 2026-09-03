@@ -49,11 +49,18 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 		t.Fatalf("skills = %d, want 2", len(result.Skills))
 	}
 
-	if _, err := service.DeleteSkill(destination); err != nil {
+	if _, err := service.DeleteSkill(source); err != nil {
 		t.Fatalf("DeleteSkill() error = %v", err)
 	}
-	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatalf("deleted skill still exists: %v", err)
+	if _, err := os.Stat(source); !os.IsNotExist(err) {
+		t.Fatalf("deleted global skill still exists: %v", err)
+	}
+	if _, err := os.Stat(destination); err != nil {
+		t.Fatalf("agent skill was deleted: %v", err)
+	}
+	backups, err := filepath.Glob(filepath.Join(home, ".agent-studio", "backups", "*", "testing", "SKILL.md"))
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backup was not created: %v", err)
 	}
 }
 

@@ -10,6 +10,10 @@ export function ApplicationName() {
   return window['go']['main']['App']['ApplicationName']();
 }
 
+export function CheckForUpdates() {
+  return window['go']['main']['App']['CheckForUpdates']();
+}
+
 export function CopySkill(arg1, arg2) {
   return window['go']['main']['App']['CopySkill'](arg1, arg2);
 }
@@ -20,6 +24,10 @@ export function DeleteSkill(arg1) {
 
 export function DiscoverLocalEnvironment() {
   return window['go']['main']['App']['DiscoverLocalEnvironment']();
+}
+
+export function DownloadAndInstallUpdate(arg1) {
+  return window['go']['main']['App']['DownloadAndInstallUpdate'](arg1);
 }
 
 export function InstallSkillFromURL(arg1, arg2) {

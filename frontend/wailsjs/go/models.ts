@@ -176,3 +176,28 @@ export namespace domain {
 
 }
 
+export namespace update {
+	
+	export class Info {
+	    currentVersion: string;
+	    latestVersion: string;
+	    releaseNotes: string;
+	    releaseURL: string;
+	    updateAvailable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Info(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.currentVersion = source["currentVersion"];
+	        this.latestVersion = source["latestVersion"];
+	        this.releaseNotes = source["releaseNotes"];
+	        this.releaseURL = source["releaseURL"];
+	        this.updateAvailable = source["updateAvailable"];
+	    }
+	}
+
+}
+

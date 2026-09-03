@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	goRuntime "runtime"
 
 	"agent-studio/internal/application"
 	"agent-studio/internal/domain"
+	"agent-studio/internal/update"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -33,6 +35,22 @@ func (a *App) startup(ctx context.Context) {
 // ApplicationName provides frontend metadata without exposing implementation details.
 func (a *App) ApplicationName() string {
 	return "Agent Studio"
+}
+
+// CheckForUpdates compares the installed build with the latest GitHub Release.
+func (a *App) CheckForUpdates() (update.Info, error) {
+	return update.Check(context.Background(), version)
+}
+
+// DownloadAndInstallUpdate validates and starts installation of the checked release.
+func (a *App) DownloadAndInstallUpdate(tagName string) error {
+	if err := update.DownloadAndInstall(context.Background(), version, tagName); err != nil {
+		return err
+	}
+	if goRuntime.GOOS == "darwin" && a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
+	return nil
 }
 
 // DiscoverLocalEnvironment returns a read-only inventory of supported local agents and skills.

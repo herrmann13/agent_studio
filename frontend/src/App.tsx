@@ -1,13 +1,13 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
-import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment, InstallSkillFromURL, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
-import {domain} from '../wailsjs/go/models';
+import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
+import {domain, update} from '../wailsjs/go/models';
 import './App.css';
 
 function App() {
     const [workspace, setWorkspace] = useState<domain.DiscoveryResult>();
     const [selectedProjectPath, setSelectedProjectPath] = useState('');
     const [draggedSkill, setDraggedSkill] = useState<domain.Skill>();
-    const [contextSkill, setContextSkill] = useState<domain.Skill>();
+    const [contextMenu, setContextMenu] = useState<{skill: domain.Skill; x: number; y: number}>();
     const [addSkillTarget, setAddSkillTarget] = useState<domain.Scope>();
     const [skillSearch, setSkillSearch] = useState('');
     const [message, setMessage] = useState<string>();
@@ -16,6 +16,9 @@ function App() {
     const [skillTargetID, setSkillTargetID] = useState('global');
     const [isInstalling, setIsInstalling] = useState(false);
     const [isInstallDialogOpen, setIsInstallDialogOpen] = useState(false);
+    const [availableUpdate, setAvailableUpdate] = useState<update.Info>();
+    const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
+    const [isUpdating, setIsUpdating] = useState(false);
 
     async function refresh() {
         setIsLoading(true);
@@ -65,7 +68,7 @@ function App() {
     }
 
     async function deleteSkill(skill: domain.Skill) {
-        setContextSkill(undefined);
+        setContextMenu(undefined);
         if (!window.confirm(`Delete "${skill.name}" from this location? A backup will be created first.`)) return;
         try {
             setWorkspace(normalizeWorkspace(await DeleteSkill(skill.path)));
@@ -73,6 +76,16 @@ function App() {
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not delete skill.');
         }
+    }
+
+    function openContextMenu(skill: domain.Skill, x: number, y: number) {
+        const menuWidth = 192;
+        const menuHeight = 88;
+        setContextMenu({
+            skill,
+            x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+            y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
+        });
     }
 
     async function removeProject(project: domain.Project) {
@@ -110,20 +123,50 @@ function App() {
         }
     }
 
+    async function checkForUpdates() {
+        setIsCheckingForUpdates(true);
+        try {
+            const info = await CheckForUpdates();
+            if (!info.updateAvailable) {
+                setMessage(`Agent Studio ${info.currentVersion} is up to date.`);
+                return;
+            }
+            setAvailableUpdate(info);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not check for updates.');
+        } finally {
+            setIsCheckingForUpdates(false);
+        }
+    }
+
+    async function installUpdate() {
+        if (!availableUpdate) return;
+        setIsUpdating(true);
+        try {
+            await DownloadAndInstallUpdate(availableUpdate.latestVersion);
+            setAvailableUpdate(undefined);
+            setMessage('Update installed. Restart Agent Studio to use the new version.');
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not install the update.');
+        } finally {
+            setIsUpdating(false);
+        }
+    }
+
     const scopes = workspace?.scopes ?? [];
     const globalScope = scopes.find((scope) => scope.kind === 'global');
     const agentScopes = scopes.filter((scope) => scope.kind === 'agent');
     const projectScopes = scopes.filter((scope) => scope.kind === 'project');
 
     return (
-        <main className="studio-shell" onClick={() => contextSkill && setContextSkill(undefined)}>
+        <main className="studio-shell" onClick={() => contextMenu && setContextMenu(undefined)}>
             <header className="studio-header">
                 <div>
                     <p className="eyebrow">SKILL WORKSPACE</p>
                     <h1>Agent Studio</h1>
                     <p className="intro">Copy skills between global, agent, and project locations. Nothing moves or deletes implicitly.</p>
                 </div>
-                <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
+                <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" type="button" onClick={() => void checkForUpdates()} disabled={isCheckingForUpdates}>{isCheckingForUpdates ? 'Checking...' : 'Check updates'}</button><button className="refresh-button" type="button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
             </header>
 
             <section className="workspace-summary">
@@ -144,8 +187,8 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading label="BASE LAYERS" title="Global and agents"/>
                 <div className="scope-grid">
-                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextSkill={setContextSkill}/> : null}
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextSkill={setContextSkill}/>) }
+                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/> : null}
+                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/>) }
                 </div>
             </section>
 
@@ -154,14 +197,14 @@ function App() {
                 {projectScopes.length ? <div className="scope-grid project-grid">
                     {projectScopes.map((scope) => {
                         const project = workspace?.projects.find((item) => item.id === scope.id.replace('project:', ''));
-                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextSkill={setContextSkill} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
+                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
                     })}
                 </div> : <p className="empty-projects">Add a project path to create its `.agents/skills` destination.</p>}
             </section>
 
-            {contextSkill ? <div className="context-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                <strong>{contextSkill.name}</strong>
-                <button role="menuitem" onClick={() => void deleteSkill(contextSkill)}>Delete skill</button>
+            {contextMenu ? <div className="context-menu" role="menu" style={{left: contextMenu.x, top: contextMenu.y}} onClick={(event) => event.stopPropagation()}>
+                <button type="button" role="menuitem" onClick={() => void deleteSkill(contextMenu.skill)}>Delete skill</button>
+                <strong>{contextMenu.skill.name}</strong>
             </div> : null}
 
             {addSkillTarget ? <AddSkillModal
@@ -173,18 +216,19 @@ function App() {
                 onClose={() => setAddSkillTarget(undefined)}
             /> : null}
             {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
+            {availableUpdate ? <UpdateDialog update={availableUpdate} isUpdating={isUpdating} onInstall={() => void installUpdate()} onClose={() => { if (!isUpdating) setAvailableUpdate(undefined); }}/> : null}
         </main>
     );
 }
 
-function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextSkill, onRemoveProject, onAddSkill}: {
+function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextMenu, onRemoveProject, onAddSkill}: {
     scope: domain.Scope;
     project?: domain.Project;
     skills: domain.Skill[];
     draggedSkill: domain.Skill | undefined;
     onDragStart: (skill: domain.Skill) => void;
     onDrop: (scope: domain.Scope) => void;
-    onContextSkill: (skill: domain.Skill) => void;
+    onContextMenu: (skill: domain.Skill, x: number, y: number) => void;
     onRemoveProject?: () => void;
     onAddSkill?: () => void;
 }) {
@@ -222,7 +266,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
         <div className="skill-stack">
             {skills.map((skill) => {
                 const isExpanded = expandedSkills.has(skill.id);
-                return <article className={`skill-card ${isExpanded ? 'is-expanded' : ''}`} key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextSkill(skill); }}>
+                return <article className={`skill-card ${isExpanded ? 'is-expanded' : ''}`} key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextMenu(skill, event.clientX, event.clientY); }}>
                     <button className="skill-card-toggle" type="button" aria-expanded={isExpanded} onClick={() => toggleSkill(skill.id)}>
                         <strong>{skill.name}</strong>
                         <span className="skill-card-action"><span className="skill-state-count">{skill.states?.length ?? 0}</span><span className="expand-icon" aria-hidden="true">{isExpanded ? '−' : '+'}</span></span>
@@ -296,6 +340,22 @@ function InstallSkillDialog({url, targetID, scopes, isInstalling, onURLChange, o
                 <select id="skill-target" value={targetID} onChange={(event) => onTargetChange(event.target.value)} required>{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
                 <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isInstalling}>Cancel</button><button type="submit" className="install-submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button></div>
             </form>
+        </section>
+    </div>;
+}
+
+function UpdateDialog({update, isUpdating, onInstall, onClose}: {
+    update: update.Info;
+    isUpdating: boolean;
+    onInstall: () => void;
+    onClose: () => void;
+}) {
+    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+        <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="update-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><div><p className="section-kicker">UPDATE AVAILABLE</p><h2 id="update-title">{update.latestVersion}</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isUpdating}>×</button></div>
+            <p className="install-help">You are using {update.currentVersion}. The installer will be downloaded, verified, and installed automatically.</p>
+            {update.releaseNotes ? <pre className="update-notes">{update.releaseNotes}</pre> : null}
+            <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isUpdating}>Later</button><button type="button" className="install-submit" onClick={onInstall} disabled={isUpdating}>{isUpdating ? 'Installing...' : 'Download and install'}</button></div>
         </section>
     </div>;
 }

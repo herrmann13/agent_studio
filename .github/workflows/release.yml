@@ -75,6 +75,8 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Generate checksums
+        run: cd dist && sha256sum *.dmg *.deb > SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
