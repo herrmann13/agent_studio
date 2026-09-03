@@ -98,6 +98,34 @@ func TestRemoveProjectStopsTrackingWithoutDeletingProjectFiles(t *testing.T) {
 	}
 }
 
+func TestParseRepositoryURL(t *testing.T) {
+	tests := []struct {
+		name, input, owner, repository, branch, directory string
+	}{
+		{"repository", "https://github.com/acme/skills", "acme", "skills", "main", ""},
+		{"skill folder", "https://github.com/acme/skills/tree/develop/packages/testing", "acme", "skills", "develop", "packages/testing"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			owner, repository, branch, directory, host, err := parseRepositoryURL(test.input)
+			if err != nil {
+				t.Fatalf("parseRepositoryURL() error = %v", err)
+			}
+			if owner != test.owner || repository != test.repository || branch != test.branch || directory != test.directory || host != "github.com" {
+				t.Errorf("got %q/%q/%q/%q/%q", owner, repository, branch, directory, host)
+			}
+		})
+	}
+}
+
+func TestParseRepositoryURLRejectsInvalidURLs(t *testing.T) {
+	for _, input := range []string{"http://github.com/acme/skills", "https://unknown.com/acme/skills", "https://github.com/acme"} {
+		if _, _, _, _, _, err := parseRepositoryURL(input); err == nil {
+			t.Errorf("parseRepositoryURL(%q) accepted invalid URL", input)
+		}
+	}
+}
+
 func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

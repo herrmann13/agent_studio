@@ -1,5 +1,5 @@
-import {Component, ErrorInfo, ReactNode, useEffect, useState} from 'react';
-import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
+import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
+import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment, InstallSkillFromURL, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
 import {domain} from '../wailsjs/go/models';
 import './App.css';
 
@@ -12,6 +12,9 @@ function App() {
     const [skillSearch, setSkillSearch] = useState('');
     const [message, setMessage] = useState<string>();
     const [isLoading, setIsLoading] = useState(true);
+    const [skillURL, setSkillURL] = useState('');
+    const [skillTargetID, setSkillTargetID] = useState('global');
+    const [isInstalling, setIsInstalling] = useState(false);
 
     async function refresh() {
         setIsLoading(true);
@@ -81,6 +84,22 @@ function App() {
         }
     }
 
+    async function installFromURL(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (!skillURL.trim() || !skillTargetID) return;
+        setIsInstalling(true);
+        try {
+            const result = await InstallSkillFromURL(skillURL.trim(), skillTargetID);
+            setWorkspace(normalizeWorkspace(result.workspace));
+            setMessage(`Skill installed via ${result.method} and is now available in the selected destination.`);
+            setSkillURL('');
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not install skill from URL.');
+        } finally {
+            setIsInstalling(false);
+        }
+    }
+
     const scopes = workspace?.scopes ?? [];
     const globalScope = scopes.find((scope) => scope.kind === 'global');
     const agentScopes = scopes.filter((scope) => scope.kind === 'agent');
@@ -111,6 +130,15 @@ function App() {
             </section>
 
             {message ? <p className="workspace-message">{message}</p> : null}
+
+            <section className="project-form skill-url-form">
+                <div><label>Install from public repository</label><span>Paste a GitHub, GitLab, or Bitbucket URL.</span></div>
+                <form onSubmit={installFromURL}>
+                    <input value={skillURL} onChange={(event) => setSkillURL(event.target.value)} placeholder="https://github.com/owner/repository/tree/main/skills/my-skill" aria-label="Public GitHub skill URL"/>
+                    <select value={skillTargetID} onChange={(event) => setSkillTargetID(event.target.value)} aria-label="Skill installation destination">{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
+                    <button type="submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button>
+                </form>
+            </section>
 
             <section className="workspace-section">
                 <SectionHeading label="BASE LAYERS" title="Global and agents"/>

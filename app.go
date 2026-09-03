@@ -45,6 +45,11 @@ func (a *App) AddProject(path string) (domain.DiscoveryResult, error) {
 	return a.discovery.AddProject(path)
 }
 
+// InstallSkillFromURL installs a public repository skill into a selected scope.
+func (a *App) InstallSkillFromURL(rawURL, targetScopeID string) (domain.SkillInstallResult, error) {
+	return a.discovery.InstallSkillFromURL(rawURL, targetScopeID)
+}
+
 // RemoveProject stops tracking a project without deleting any project files.
 func (a *App) RemoveProject(projectID string) (domain.DiscoveryResult, error) {
 	return a.discovery.RemoveProject(projectID)
