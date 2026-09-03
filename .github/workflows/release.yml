@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate semantic version tag
+        run: |
+          [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "Tags must use vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
+            exit 1
+          }
+
+  package-macos:
+    name: macOS ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner: [macos-13, macos-14]
+    runs-on: ${{ matrix.runner }}
+    needs: validate-tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.8
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build DMG
+        run: make package-macos VERSION=${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.runner }}
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  package-linux:
+    runs-on: ubuntu-22.04
+    needs: validate-tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.8
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Install Linux build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libgtk-3-dev libwebkit2gtk-4.0-dev
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Build DEB
+        run: make package-linux VERSION=${{ github.ref_name }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-amd64
+          path: dist/*.deb
+          if-no-files-found: error
+
+  publish:
+    needs: [package-macos, package-linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag

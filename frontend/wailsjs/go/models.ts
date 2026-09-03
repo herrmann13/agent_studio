@@ -1,5 +1,5 @@
 export namespace domain {
-
+	
 	export class Agent {
 	    id: string;
 	    name: string;
@@ -7,11 +7,11 @@ export namespace domain {
 	    status: string;
 	    configPath: string;
 	    commandPath?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Agent(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -26,11 +26,11 @@ export namespace domain {
 	    provider: string;
 	    path: string;
 	    scope: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ConfigFile(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.provider = source["provider"];
@@ -42,11 +42,11 @@ export namespace domain {
 	    id: string;
 	    name: string;
 	    path: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Project(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -60,11 +60,11 @@ export namespace domain {
 	    kind: string;
 	    provider?: string;
 	    root: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Scope(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -82,11 +82,11 @@ export namespace domain {
 	    scopeId: string;
 	    states: string[];
 	    contentHash: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Skill(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -105,11 +105,11 @@ export namespace domain {
 	    scopes: Scope[];
 	    projects: Project[];
 	    scannedAt: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new DiscoveryResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.agents = this.convertValues(source["agents"], Agent);
@@ -119,7 +119,7 @@ export namespace domain {
 	        this.projects = this.convertValues(source["projects"], Project);
 	        this.scannedAt = source["scannedAt"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -138,7 +138,8 @@ export namespace domain {
 		    return a;
 		}
 	}
-
-
+	
+	
 
 }
+

@@ -9,32 +9,43 @@ Local-first desktop companion for configuring skills and profiles for OpenCode, 
 
 ## Development
 
-Install the frontend dependencies with Bun:
+The root `Makefile` is the supported interface for local development:
 
 ```sh
-bun install --frozen-lockfile
+make setup    # Verify Go, Bun, and Wails; install locked dependencies.
+make dev      # Start the Wails desktop app with hot reload.
+make test     # Build the frontend and run Go tests.
+make check    # Run tests and validate the worktree formatting.
+make build    # Build the production app for the current platform.
+make package  # Create a .dmg on macOS or .deb on Linux.
 ```
 
-Run the frontend independently when needed:
+Pass an explicit version when packaging a release candidate locally:
 
 ```sh
-bun run dev
-bun run build
-```
-
-Run the desktop application with Wails:
-
-```sh
-wails dev
-```
-
-Use the Wails binary installed by Go if it is not in your `PATH`:
-
-```sh
-"$(go env GOPATH)/bin/wails" dev
+make package VERSION=v0.1.0-rc.1
 ```
 
 The frontend uses Bun. Do not create or update `package-lock.json`.
+
+## Releases
+
+GitHub Actions validates pushes and pull requests. Pushing a version tag builds native release artifacts and publishes a GitHub Release:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The release contains:
+
+```text
+agent-studio-v0.1.0-macos-arm64.dmg
+agent-studio-v0.1.0-macos-amd64.dmg
+agent-studio-v0.1.0-linux-amd64.deb
+```
+
+macOS and Linux packages are created on their native GitHub runners because Wails uses platform-specific CGO dependencies.
 
 ## Architecture
 
