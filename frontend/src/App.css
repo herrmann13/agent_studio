@@ -2,6 +2,7 @@
 .fatal-error { min-height: 100vh; box-sizing: border-box; padding: 4rem; background: #101828; color: #eef5fb; }.fatal-error p:not(.eyebrow) { max-width: 42rem; color: #ffb4aa; line-height: 1.5; }.fatal-error button { border: 1px solid #37627e; border-radius: .55rem; padding: .7rem 1rem; background: #163a52; color: #e1faff; cursor: pointer; }
 .studio-header, .workspace-summary, .project-form, .workspace-section, .workspace-message { width: min(100%, 78rem); margin-right: auto; margin-left: auto; }
 .studio-header { display: flex; gap: 2rem; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; }
+.header-actions { display: flex; flex: 0 0 auto; gap: .6rem; align-items: center; }
 .eyebrow, .section-heading p { margin: 0 0 .45rem; color: #78dce9; font-size: .7rem; font-weight: 800; letter-spacing: .13em; }
 h1 { margin: 0; font-size: clamp(2.25rem, 6vw, 4.5rem); letter-spacing: -.06em; }
 .intro { max-width: 39rem; color: #aebdcd; line-height: 1.55; }
@@ -21,8 +22,10 @@ h1 { margin: 0; font-size: clamp(2.25rem, 6vw, 4.5rem); letter-spacing: -.06em; 
 .skill-url-form > form select { max-width: 10rem; border: 1px solid #38536b; border-radius: .4rem; padding: .65rem; background: #0d1d2d; color: #edf7ff; font: inherit; }
 .skill-url-form > form button { flex: 0 0 auto; border: 1px solid #3a806d; border-radius: .4rem; padding: .65rem .8rem; background: #1d574e; color: #c8f8dd; font: inherit; cursor: pointer; }
 .skill-url-form > form button:disabled { cursor: wait; opacity: .6; }
+.install-button, .install-submit { border: 1px solid #3a806d; border-radius: .55rem; padding: .7rem 1rem; background: #1d574e; color: #c8f8dd; font: inherit; cursor: pointer; }.install-button:hover, .install-submit:hover { background: #267260; }.install-help { margin: 0 1.25rem 1.1rem; color: #aebdcd; font-size: .82rem; line-height: 1.5; }.install-modal { width: min(100%, 34rem); border: 1px solid #426480; border-radius: .85rem; background: #12283d; box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, .45); }.install-dialog-form { display: grid; gap: .5rem; padding: 0 1.25rem 1.25rem; }.install-dialog-form label { margin-top: .35rem; color: #c7d9e8; font-size: .76rem; font-weight: 700; }.install-dialog-form input, .install-dialog-form select { box-sizing: border-box; width: 100%; border: 1px solid #38536b; border-radius: .45rem; padding: .7rem .75rem; outline: none; background: #0d1d2d; color: #edf7ff; font: inherit; }.install-dialog-form input:focus, .install-dialog-form select:focus { border-color: #75d6e8; }.install-dialog-actions { display: flex; justify-content: flex-end; gap: .6rem; margin-top: .7rem; }.modal-secondary { border: 1px solid #426480; border-radius: .45rem; padding: .65rem .85rem; background: transparent; color: #b9ccdc; font: inherit; cursor: pointer; }.modal-secondary:hover { background: #203d56; }.install-submit { border-radius: .45rem; padding: .65rem .85rem; }
 
 @media (max-width: 760px) {
+    .header-actions { width: 100%; }.header-actions button { flex: 1; }
     .skill-url-form > form { flex-basis: 100%; flex-wrap: wrap; }
     .skill-url-form > form input { flex-basis: 100%; order: 1; }
     .skill-url-form > form select { flex: 1; order: 2; max-width: none; }

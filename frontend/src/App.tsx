@@ -15,6 +15,7 @@ function App() {
     const [skillURL, setSkillURL] = useState('');
     const [skillTargetID, setSkillTargetID] = useState('global');
     const [isInstalling, setIsInstalling] = useState(false);
+    const [isInstallDialogOpen, setIsInstallDialogOpen] = useState(false);
 
     async function refresh() {
         setIsLoading(true);
@@ -29,6 +30,15 @@ function App() {
     }
 
     useEffect(() => { void refresh(); }, []);
+
+    useEffect(() => {
+        if (!isInstallDialogOpen) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape' && !isInstalling) setIsInstallDialogOpen(false);
+        };
+        window.addEventListener('keydown', closeOnEscape);
+        return () => window.removeEventListener('keydown', closeOnEscape);
+    }, [isInstallDialogOpen, isInstalling]);
 
     async function selectProject() {
         try {
@@ -113,7 +123,7 @@ function App() {
                     <h1>Agent Studio</h1>
                     <p className="intro">Copy skills between global, agent, and project locations. Nothing moves or deletes implicitly.</p>
                 </div>
-                <button className="refresh-button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button>
+                <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
             </header>
 
             <section className="workspace-summary">
@@ -130,15 +140,6 @@ function App() {
             </section>
 
             {message ? <p className="workspace-message">{message}</p> : null}
-
-            <section className="project-form skill-url-form">
-                <div><label>Install from public repository</label><span>Paste a GitHub, GitLab, or Bitbucket URL.</span></div>
-                <form onSubmit={installFromURL}>
-                    <input value={skillURL} onChange={(event) => setSkillURL(event.target.value)} placeholder="https://github.com/owner/repository/tree/main/skills/my-skill" aria-label="Public GitHub skill URL"/>
-                    <select value={skillTargetID} onChange={(event) => setSkillTargetID(event.target.value)} aria-label="Skill installation destination">{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
-                    <button type="submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button>
-                </form>
-            </section>
 
             <section className="workspace-section">
                 <SectionHeading label="BASE LAYERS" title="Global and agents"/>
@@ -171,6 +172,7 @@ function App() {
                 onAdd={(skill) => void addSkillToProject(skill, addSkillTarget)}
                 onClose={() => setAddSkillTarget(undefined)}
             /> : null}
+            {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
         </main>
     );
 }
@@ -269,6 +271,31 @@ function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
                 })}
                 {!availableSkills.length ? <p className="empty-state">No skills match your search.</p> : null}
             </div>
+        </section>
+    </div>;
+}
+
+function InstallSkillDialog({url, targetID, scopes, isInstalling, onURLChange, onTargetChange, onSubmit, onClose}: {
+    url: string;
+    targetID: string;
+    scopes: domain.Scope[];
+    isInstalling: boolean;
+    onURLChange: (value: string) => void;
+    onTargetChange: (value: string) => void;
+    onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    onClose: () => void;
+}) {
+    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+        <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-skill-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><div><p className="section-kicker">PUBLIC REPOSITORY</p><h2 id="install-skill-title">Install skill</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isInstalling}>×</button></div>
+            <p className="install-help">Paste a public GitHub, GitLab, or Bitbucket repository URL. Agent Studio will use Git when available and ZIP otherwise.</p>
+            <form className="install-dialog-form" onSubmit={onSubmit}>
+                <label htmlFor="skill-url">Repository or skill folder URL</label>
+                <input id="skill-url" value={url} onChange={(event) => onURLChange(event.target.value)} placeholder="https://github.com/owner/repository/tree/main/skills/my-skill" autoFocus required/>
+                <label htmlFor="skill-target">Install into</label>
+                <select id="skill-target" value={targetID} onChange={(event) => onTargetChange(event.target.value)} required>{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
+                <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isInstalling}>Cancel</button><button type="submit" className="install-submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button></div>
+            </form>
         </section>
     </div>;
 }
