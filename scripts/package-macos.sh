@@ -13,4 +13,8 @@ esac
 
 VERSION="$VERSION" WAILS="$WAILS" bash scripts/build.sh
 mkdir -p dist
-hdiutil create -volname "Agent Studio" -srcfolder "build/bin/agent-studio.app" -ov -format UDZO "dist/agent-studio-${VERSION}-macos-${ARCH}.dmg"
+staging_dir="$(mktemp -d)"
+trap 'rm -rf "$staging_dir"' EXIT
+cp -R "build/bin/agent-studio.app" "$staging_dir/agent-studio.app"
+ln -s /Applications "$staging_dir/Applications"
+hdiutil create -volname "Agent Studio" -srcfolder "$staging_dir" -ov -format UDZO "dist/agent-studio-${VERSION}-macos-${ARCH}.dmg"

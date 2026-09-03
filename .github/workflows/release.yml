@@ -20,10 +20,16 @@ jobs:
           }
 
   package-macos:
-    name: macOS ${{ matrix.runner }}
     strategy:
       matrix:
-        runner: [macos-13, macos-14]
+        include:
+          - runner: macos-15-intel
+            arch: amd64
+            binary_arch: x86_64
+          - runner: macos-14
+            arch: arm64
+            binary_arch: arm64
+    name: macOS ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     needs: validate-tag
     steps:
@@ -38,10 +44,19 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
       - name: Build DMG
         run: make package-macos VERSION=${{ github.ref_name }}
+      - name: Validate DMG
+        run: |
+          test "$(lipo -archs build/bin/agent-studio.app/Contents/MacOS/agent-studio)" = "${{ matrix.binary_arch }}"
+          mount_dir=$(mktemp -d)
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "dist/agent-studio-${{ github.ref_name }}-macos-${{ matrix.arch }}.dmg"
+          test -d "$mount_dir/agent-studio.app"
+          test -L "$mount_dir/Applications"
+          hdiutil detach "$mount_dir"
+          rmdir "$mount_dir"
       - uses: actions/upload-artifact@v4
         with:
-          name: macos-${{ matrix.runner }}
-          path: dist/*.dmg
+          name: macos-${{ matrix.arch }}
+          path: dist/agent-studio-${{ github.ref_name }}-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   package-linux:
