@@ -201,7 +201,27 @@ func findSkillRoot(root, subdirectory string) (string, error) {
 		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("repository skill path is unsafe")
 		}
-		matches, _ := filepath.Glob(filepath.Join(root, "*", clean))
+
+		// Git checks out directly into root, while archive downloads include a
+		// single repository directory (for example, agents-main).
+		candidates := []string{filepath.Join(root, clean)}
+		entries, readErr := os.ReadDir(root)
+		if readErr != nil {
+			return "", fmt.Errorf("inspect downloaded repository: %w", readErr)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() {
+				candidates = append(candidates, filepath.Join(root, entry.Name(), clean))
+			}
+		}
+
+		matches := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			info, statErr := os.Stat(candidate)
+			if statErr == nil && info.IsDir() {
+				matches = append(matches, candidate)
+			}
+		}
 		if len(matches) != 1 {
 			return "", fmt.Errorf("skill directory was not found in repository")
 		}

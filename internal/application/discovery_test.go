@@ -126,6 +126,37 @@ func TestParseRepositoryURLRejectsInvalidURLs(t *testing.T) {
 	}
 }
 
+func TestFindSkillRootSupportsGitAndZIPLayouts(t *testing.T) {
+	const skillPath = "plugins/ui-design/skills/responsive-design"
+
+	tests := []struct {
+		name       string
+		repository string
+	}{
+		{name: "git checkout", repository: ""},
+		{name: "zip archive", repository: "agents-main"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			base := root
+			if test.repository != "" {
+				base = filepath.Join(root, test.repository)
+			}
+			expected := filepath.Join(base, filepath.FromSlash(skillPath))
+			writeFixture(t, filepath.Join(expected, "SKILL.md"), "# Responsive design\n")
+
+			actual, err := findSkillRoot(root, skillPath)
+			if err != nil {
+				t.Fatalf("findSkillRoot() error = %v", err)
+			}
+			if actual != expected {
+				t.Errorf("findSkillRoot() = %q, want %q", actual, expected)
+			}
+		})
+	}
+}
+
 func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
