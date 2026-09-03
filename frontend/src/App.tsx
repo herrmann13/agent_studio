@@ -181,7 +181,7 @@ function App() {
             </header>
 
             <section className="project-form">
-                <div><label>Track a project</label><span>Select a folder to scan its project skills.</span></div>
+                <div><label>Track a project</label></div>
                 <button type="button" onClick={() => void selectProject()}>Select project folder</button>
                 {selectedProjectPath ? <div className="selected-project"><span>Selected project</span><code title={selectedProjectPath}>{selectedProjectPath}</code></div> : null}
             </section>
