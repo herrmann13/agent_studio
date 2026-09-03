@@ -14,6 +14,7 @@ The root `Makefile` is the supported interface for local development:
 ```sh
 make setup    # Verify Go, Bun, and Wails; install locked dependencies.
 make dev      # Start the Wails desktop app with hot reload.
+make dev-browser # Start Wails and expose the integrated browser endpoint.
 make test     # Build the frontend and run Go tests.
 make check    # Run tests and validate the worktree formatting.
 make build    # Build the production app for the current platform.

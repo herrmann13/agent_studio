@@ -1,4 +1,4 @@
-import {FormEvent, useEffect, useState} from 'react';
+import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
 import {AddProject, CopySkill, DeleteSkill, DiscoverLocalEnvironment} from '../wailsjs/go/main/App';
 import {domain} from '../wailsjs/go/models';
 import './App.css';
@@ -14,7 +14,7 @@ function App() {
     async function refresh() {
         setIsLoading(true);
         try {
-            setWorkspace(await DiscoverLocalEnvironment());
+            setWorkspace(normalizeWorkspace(await DiscoverLocalEnvironment()));
             setMessage(undefined);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not inspect the local workspace.');
@@ -29,7 +29,7 @@ function App() {
         event.preventDefault();
         if (!projectPath.trim()) return;
         try {
-            setWorkspace(await AddProject(projectPath.trim()));
+            setWorkspace(normalizeWorkspace(await AddProject(projectPath.trim())));
             setProjectPath('');
             setMessage(undefined);
         } catch (error) {
@@ -40,7 +40,7 @@ function App() {
     async function dropSkill(scope: domain.Scope) {
         if (!draggedSkill || draggedSkill.scopeId === scope.id) return;
         try {
-            setWorkspace(await CopySkill(draggedSkill.path, scope.id));
+            setWorkspace(normalizeWorkspace(await CopySkill(draggedSkill.path, scope.id)));
             setMessage(`Copied ${draggedSkill.name} to ${scope.name}.`);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not copy skill.');
@@ -53,7 +53,7 @@ function App() {
         setContextSkill(undefined);
         if (!window.confirm(`Delete "${skill.name}" from this location? A backup will be created first.`)) return;
         try {
-            setWorkspace(await DeleteSkill(skill.path));
+            setWorkspace(normalizeWorkspace(await DeleteSkill(skill.path)));
             setMessage(`Deleted ${skill.name}. A backup was created locally.`);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not delete skill.');
@@ -138,7 +138,7 @@ function ScopeLane({scope, skills, draggedSkill, onDragStart, onDrop, onContextS
             {skills.map((skill) => <article className="skill-card" key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextSkill(skill); }}>
                 <div className="skill-card-heading"><strong>{skill.name}</strong><span className="drag-handle" aria-label="Drag to copy">::</span></div>
                 <p>{skill.description}</p>
-                <div className="skill-states">{skill.states.map((state) => <span className={state} key={state}>{state}</span>)}</div>
+                <div className="skill-states">{(skill.states ?? []).map((state) => <span className={state} key={state}>{state}</span>)}</div>
             </article>)}
             {!skills.length ? <p className="lane-placeholder">Drop a skill here to copy it.</p> : null}
         </div>
@@ -157,4 +157,32 @@ function skillsInScope(workspace: domain.DiscoveryResult | undefined, scopeID: s
     return workspace?.skills.filter((skill) => skill.scopeId === scopeID) ?? [];
 }
 
-export default App;
+function normalizeWorkspace(workspace: domain.DiscoveryResult): domain.DiscoveryResult {
+    workspace.agents ??= [];
+    workspace.skills ??= [];
+    workspace.configFiles ??= [];
+    workspace.scopes ??= [];
+    workspace.projects ??= [];
+    return workspace;
+}
+
+class ErrorBoundary extends Component<{children: ReactNode}, {error?: Error}> {
+    state: {error?: Error} = {};
+
+    static getDerivedStateFromError(error: Error) {
+        return {error};
+    }
+
+    componentDidCatch(error: Error, info: ErrorInfo) {
+        console.error('Agent Studio failed to render', error, info.componentStack);
+    }
+
+    render() {
+        if (!this.state.error) return this.props.children;
+        return <main className="fatal-error"><p className="eyebrow">AGENT STUDIO</p><h1>Could not render the workspace</h1><p>{this.state.error.message}</p><button onClick={() => window.location.reload()}>Reload</button></main>;
+    }
+}
+
+export default function RootApp() {
+    return <ErrorBoundary><App /></ErrorBoundary>;
+}

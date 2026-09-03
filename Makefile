@@ -5,7 +5,7 @@ WAILS ?= $(shell go env GOPATH)/bin/wails
 VERSION ?= dev
 
 .DEFAULT_GOAL := help
-.PHONY: help setup dev test check build package package-macos package-linux clean
+.PHONY: help setup dev dev-browser test check build package package-macos package-linux clean
 
 help: ## List the available local development commands.
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -15,6 +15,9 @@ setup: ## Check local tools and install locked frontend and Go dependencies.
 
 dev: setup ## Start the desktop app with frontend and Go hot reload.
 	@$(WAILS) dev
+
+dev-browser: setup ## Start Wails development and open the integrated browser endpoint.
+	@$(WAILS) dev -browser
 
 test: ## Run frontend compilation and Go tests.
 	@BUN="$(BUN)" bash scripts/test.sh

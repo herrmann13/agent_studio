@@ -39,7 +39,14 @@ func DefaultDiscoveryService() (*DiscoveryService, error) {
 
 // Discover returns the complete, read-only workspace inventory.
 func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
-	result := domain.DiscoveryResult{ScannedAt: time.Now().UTC().Format(time.RFC3339)}
+	result := domain.DiscoveryResult{
+		Agents:      []domain.Agent{},
+		Skills:      []domain.Skill{},
+		ConfigFiles: []domain.ConfigFile{},
+		Scopes:      []domain.Scope{},
+		Projects:    []domain.Project{},
+		ScannedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
 	result.Projects = s.loadProjects()
 	result.Scopes = append(result.Scopes, domain.Scope{
 		ID: "global", Name: "Global", Kind: "global", Root: filepath.Join(s.home, ".agents", "skills"),
