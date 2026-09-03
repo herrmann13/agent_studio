@@ -29,6 +29,5 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 func (Adapter) SkillRoots(home string) []string {
 	return []string{
 		filepath.Join(home, ".codex", "skills"),
-		filepath.Join(home, ".agents", "skills"),
 	}
 }

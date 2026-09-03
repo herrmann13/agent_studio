@@ -38,3 +38,18 @@ func (a *App) ApplicationName() string {
 func (a *App) DiscoverLocalEnvironment() (domain.DiscoveryResult, error) {
 	return a.discovery.Discover()
 }
+
+// AddProject starts tracking a project skill directory without modifying the project.
+func (a *App) AddProject(path string) (domain.DiscoveryResult, error) {
+	return a.discovery.AddProject(path)
+}
+
+// CopySkill copies a complete skill directory into an explicit destination scope.
+func (a *App) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult, error) {
+	return a.discovery.CopySkill(skillPath, targetScopeID)
+}
+
+// DeleteSkill removes a skill after the frontend obtains explicit confirmation.
+func (a *App) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
+	return a.discovery.DeleteSkill(skillPath)
+}

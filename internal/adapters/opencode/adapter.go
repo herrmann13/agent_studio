@@ -30,6 +30,5 @@ func (Adapter) SkillRoots(home string) []string {
 	return []string{
 		filepath.Join(home, ".config", "opencode", "skills"),
 		filepath.Join(home, ".opencode", "skills"),
-		filepath.Join(home, ".agents", "skills"),
 	}
 }
