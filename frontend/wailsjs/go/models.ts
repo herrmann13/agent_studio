@@ -82,6 +82,7 @@ export namespace domain {
 	    scopeId: string;
 	    states: string[];
 	    contentHash: string;
+	    invocationMode: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Skill(source);
@@ -96,6 +97,7 @@ export namespace domain {
 	        this.scopeId = source["scopeId"];
 	        this.states = source["states"];
 	        this.contentHash = source["contentHash"];
+	        this.invocationMode = source["invocationMode"];
 	    }
 	}
 	export class DiscoveryResult {

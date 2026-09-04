@@ -41,3 +41,7 @@ export function RemoveProject(arg1) {
 export function SelectProjectFolder() {
   return window['go']['main']['App']['SelectProjectFolder']();
 }
+
+export function SetSkillInvocationMode(arg1, arg2) {
+  return window['go']['main']['App']['SetSkillInvocationMode'](arg1, arg2);
+}

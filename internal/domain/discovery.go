@@ -28,13 +28,14 @@ type ConfigFile struct {
 
 // Skill is prompt content found in a known local skill directory.
 type Skill struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Path        string   `json:"path"`
-	ScopeID     string   `json:"scopeId"`
-	States      []string `json:"states"`
-	ContentHash string   `json:"contentHash"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	Path           string   `json:"path"`
+	ScopeID        string   `json:"scopeId"`
+	States         []string `json:"states"`
+	ContentHash    string   `json:"contentHash"`
+	InvocationMode string   `json:"invocationMode"`
 }
 
 // Scope is a physical skill directory managed by the workspace.

@@ -3,6 +3,7 @@ package application
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,45 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 	}
 	if _, err := os.Stat(destination); err != nil {
 		t.Fatalf("agent skill was deleted: %v", err)
+	}
+}
+
+func TestSkillInvocationModesSyncOpenCodeWithoutOverwritingUserCommand(t *testing.T) {
+	home := t.TempDir()
+	skillPath := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, skillPath, "---\nname: testing\ndescription: Write focused tests.\n---\nFollow the test workflow.\n")
+	writeFixture(t, filepath.Join(home, ".config", "opencode", "opencode.json"), `{"permission":{"skill":{"testing":"deny"}}}`)
+	service := NewDiscoveryService(home)
+
+	result, err := service.SetSkillInvocationMode(skillPath, "explicit")
+	if err != nil {
+		t.Fatalf("SetSkillInvocationMode(explicit) error = %v", err)
+	}
+	if result.Skills[0].InvocationMode != "explicit" {
+		t.Fatalf("mode = %q, want explicit", result.Skills[0].InvocationMode)
+	}
+	commandPath := filepath.Join(home, ".config", "opencode", "commands", "testing.md")
+	if _, err := os.Stat(commandPath); err != nil {
+		t.Fatalf("generated command is missing: %v", err)
+	}
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "always"); err != nil {
+		t.Fatalf("SetSkillInvocationMode(always) error = %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), `"testing": "deny"`) {
+		t.Fatalf("original permission was not restored: %s", config)
+	}
+
+	userCommand := "---\ndescription: User command\n---\nDo not replace me.\n"
+	if err := os.WriteFile(commandPath, []byte(userCommand), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err == nil {
+		t.Fatal("expected existing user command to be protected")
 	}
 }
 

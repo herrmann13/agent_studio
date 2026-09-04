@@ -94,3 +94,8 @@ func (a *App) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult
 func (a *App) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
 	return a.discovery.DeleteSkill(skillPath)
 }
+
+// SetSkillInvocationMode configures how OpenCode may use one skill copy.
+func (a *App) SetSkillInvocationMode(skillPath, mode string) (domain.DiscoveryResult, error) {
+	return a.discovery.SetSkillInvocationMode(skillPath, mode)
+}

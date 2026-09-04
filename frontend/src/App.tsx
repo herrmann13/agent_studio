@@ -1,5 +1,5 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
-import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder} from '../wailsjs/go/main/App';
+import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder, SetSkillInvocationMode} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
 import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
 import codexIcon from './assets/agents/Codex Logo - Colored - zonalogo.com.svg';
@@ -136,6 +136,15 @@ function App() {
         }
     }
 
+    async function changeSkillMode(skill: domain.Skill, mode: string) {
+        try {
+            setWorkspace(normalizeWorkspace(await SetSkillInvocationMode(skill.path, mode)));
+            setMessage(`${skill.name} is now configured as ${mode}.`);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Could not configure skill usage.');
+        }
+    }
+
     async function checkForUpdates() {
         setIsCheckingForUpdates(true);
         try {
@@ -175,7 +184,7 @@ function App() {
         <main className="studio-shell" onClick={() => contextMenu && setContextMenu(undefined)}>
             <header className="studio-header">
                 <div>
-                    <h1>Agent Studio</h1>
+                    <h2>Agent Studio</h2>
                 </div>
                 <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" type="button" onClick={() => void checkForUpdates()} disabled={isCheckingForUpdates}>{isCheckingForUpdates ? 'Checking...' : 'Check updates'}</button><button className="refresh-button" type="button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
             </header>
@@ -191,8 +200,8 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading label="" title="Global and agents"/>
                 <div className="scope-grid">
-                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/> : null}
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu}/>) }
+                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/> : null}
+                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
                 </div>
             </section>
 
@@ -201,7 +210,7 @@ function App() {
                 {projectScopes.length ? <div className="scope-grid project-grid">
                     {projectScopes.map((scope) => {
                         const project = workspace?.projects.find((item) => item.id === scope.id.replace('project:', ''));
-                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
+                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
                     })}
                 </div> : <p className="empty-projects">Add a project path to create its `.agents/skills` destination.</p>}
             </section>
@@ -226,7 +235,7 @@ function App() {
     );
 }
 
-function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextMenu, onRemoveProject, onAddSkill}: {
+function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill}: {
     scope: domain.Scope;
     project?: domain.Project;
     skills: domain.Skill[];
@@ -234,6 +243,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
     onDragStart: (skill: domain.Skill) => void;
     onDrop: (scope: domain.Scope) => void;
     onContextMenu: (skill: domain.Skill, x: number, y: number) => void;
+    onModeChange: (skill: domain.Skill, mode: string) => void;
     onRemoveProject?: () => void;
     onAddSkill?: () => void;
 }) {
@@ -281,6 +291,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
                         <p>{skill.description}</p>
                         <small>{skill.path}</small>
                         <div className="skill-states">{(skill.states ?? []).map((state) => <span className={state} key={state}>{state}</span>)}</div>
+                        {scope.kind !== 'agent' || scope.provider === 'opencode' ? <label className="skill-mode-label">OpenCode usage<select value={skill.invocationMode || 'automatic'} onChange={(event) => void onModeChange(skill, event.target.value)}><option value="automatic">Automatic</option><option value="always">Always active</option><option value="explicit">Explicit (ask permission)</option><option value="disabled">Disabled</option></select></label> : null}
                     </div> : null}
                     <span className="drag-handle" aria-label="Drag to copy">::</span>
                 </article>;

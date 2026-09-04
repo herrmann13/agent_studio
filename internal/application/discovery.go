@@ -81,6 +81,9 @@ func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
 		result.Skills = append(result.Skills, skills...)
 	}
 	applySkillStates(result.Skills)
+	if err := s.applySkillPolicies(result.Skills); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
 	sort.Slice(result.Skills, func(i, j int) bool { return result.Skills[i].Name < result.Skills[j].Name })
 	return result, nil
 }
@@ -104,6 +107,34 @@ func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, erro
 	hash := sha256.Sum256([]byte(absPath))
 	projects = append(projects, domain.Project{ID: fmt.Sprintf("%x", hash[:8]), Name: filepath.Base(absPath), Path: absPath})
 	if err := s.saveProjects(projects); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	return s.Discover()
+}
+
+// SetSkillInvocationMode persists a per-copy policy and synchronizes OpenCode.
+func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domain.DiscoveryResult, error) {
+	if !validInvocationMode(mode) {
+		return domain.DiscoveryResult{}, fmt.Errorf("invalid skill invocation mode %q", mode)
+	}
+	workspace, err := s.Discover()
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	skill, err := s.skillFromWorkspace(workspace, skillPath)
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	policies := s.loadSkillPolicies()
+	previous := policies[skill.Path]
+	policy := previous
+	policy.Mode = mode
+	policies[skill.Path] = policy
+	if err := s.syncOpenCodePolicy(skill, mode, &policy); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	policies[skill.Path] = policy
+	if err := s.saveSkillPolicies(policies); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
 	return s.Discover()
@@ -256,7 +287,7 @@ func parseSkill(path string) (domain.Skill, error) {
 	}
 	pathHash := sha256.Sum256([]byte(path))
 	contentHash := sha256.Sum256(content)
-	return domain.Skill{ID: fmt.Sprintf("%x", pathHash[:8]), Name: name, Description: description, Path: path, ContentHash: fmt.Sprintf("%x", contentHash[:])}, nil
+	return domain.Skill{ID: fmt.Sprintf("%x", pathHash[:8]), Name: name, Description: description, Path: path, ContentHash: fmt.Sprintf("%x", contentHash[:]), InvocationMode: "automatic"}, nil
 }
 
 func applySkillStates(skills []domain.Skill) {
