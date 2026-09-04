@@ -37,6 +37,7 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 	service := NewDiscoveryService(home)
 	source := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
 	writeFixture(t, source, "# Testing\n")
+	writeFixture(t, filepath.Join(filepath.Dir(source), "agents", "openai.yaml"), "# Agent Studio managed invocation policy\npolicy:\n  allow_implicit_invocation: false\n")
 
 	result, err := service.CopySkill(source, "codex")
 	if err != nil {
@@ -45,6 +46,9 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 	destination := filepath.Join(home, ".codex", "skills", "testing", "SKILL.md")
 	if _, err := os.Stat(destination); err != nil {
 		t.Fatalf("copied skill is missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(destination), "agents", "openai.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("managed Codex metadata leaked into copied skill: %v", err)
 	}
 	if len(result.Skills) != 2 {
 		t.Fatalf("skills = %d, want 2", len(result.Skills))
@@ -100,6 +104,66 @@ func TestSkillInvocationModesSyncOpenCodeWithoutOverwritingUserCommand(t *testin
 	}
 }
 
+func TestSkillInvocationModesSyncClaude(t *testing.T) {
+	home := t.TempDir()
+	skillPath := filepath.Join(home, ".claude", "skills", "review", "SKILL.md")
+	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
+	writeFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"allow":[]}}`)
+	service := NewDiscoveryService(home)
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err != nil {
+		t.Fatalf("Claude explicit mode error = %v", err)
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), `"review": "user-invocable-only"`) {
+		t.Fatalf("Claude explicit override missing: %s", settings)
+	}
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "always"); err != nil {
+		t.Fatalf("Claude always mode error = %v", err)
+	}
+	instructions, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(instructions), "BEGIN AGENT STUDIO SKILL") {
+		t.Fatalf("Claude managed instructions missing: %s", instructions)
+	}
+}
+
+func TestSkillInvocationModesSyncCodex(t *testing.T) {
+	home := t.TempDir()
+	skillPath := filepath.Join(home, ".codex", "skills", "review", "SKILL.md")
+	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
+	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"\n")
+	service := NewDiscoveryService(home)
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err != nil {
+		t.Fatalf("Codex explicit mode error = %v", err)
+	}
+	metadata, err := os.ReadFile(filepath.Join(home, ".codex", "skills", "review", "agents", "openai.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(metadata), "allow_implicit_invocation: false") {
+		t.Fatalf("Codex explicit policy missing: %s", metadata)
+	}
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "disabled"); err != nil {
+		t.Fatalf("Codex disabled mode error = %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "enabled = false") {
+		t.Fatalf("Codex disabled policy missing: %s", config)
+	}
+}
+
 func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	home := t.TempDir()
 	project := filepath.Join(home, "project")
@@ -110,7 +174,7 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
 	}
-	if len(result.Projects) != 1 || len(result.Scopes) != 5 {
+	if len(result.Projects) != 1 || len(result.Scopes) != 7 {
 		t.Fatalf("unexpected workspace = %#v", result)
 	}
 }

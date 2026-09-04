@@ -24,7 +24,7 @@ test: ## Run frontend compilation and Go tests.
 	@BUN="$(BUN)" bash scripts/test.sh
 
 check: test ## Run all local validation, including whitespace checks.
-	@test -z "$$(gofmt -l .)" || { echo "Run gofmt on:"; gofmt -l .; exit 1; }
+	@GOFILES="$$(git ls-files -co --exclude-standard '*.go' ':!vendor/**')"; test -z "$$(gofmt -l $$GOFILES)" || { echo "Run gofmt on:"; gofmt -l $$GOFILES; exit 1; }
 	@git diff --check -- . ':(exclude)frontend/wailsjs/go/models.ts'
 
 build: ## Build a production application for the current platform.
