@@ -69,8 +69,11 @@ func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
 
 	for _, project := range result.Projects {
 		result.Scopes = append(result.Scopes, domain.Scope{
-			ID: "project:" + project.ID, Name: project.Name, Kind: "project", Root: filepath.Join(project.Path, ".agents", "skills"),
-		})
+			ID: "project:" + project.ID, Name: project.Name + " (shared)", Kind: "project", Root: filepath.Join(project.Path, ".agents", "skills"),
+		},
+			domain.Scope{ID: "project:" + project.ID + ":claude", Name: project.Name + " (Claude)", Kind: "project", Provider: domain.ProviderClaude, Root: filepath.Join(project.Path, ".claude", "skills")},
+			domain.Scope{ID: "project:" + project.ID + ":opencode", Name: project.Name + " (OpenCode)", Kind: "project", Provider: domain.ProviderOpenCode, Root: filepath.Join(project.Path, ".opencode", "skills")},
+		)
 	}
 
 	for _, scope := range result.Scopes {
@@ -112,7 +115,7 @@ func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, erro
 	return s.Discover()
 }
 
-// SetSkillInvocationMode persists a per-copy policy and synchronizes OpenCode.
+// SetSkillInvocationMode persists a per-copy policy and synchronizes its agent.
 func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domain.DiscoveryResult, error) {
 	if !validInvocationMode(mode) {
 		return domain.DiscoveryResult{}, fmt.Errorf("invalid skill invocation mode %q", mode)
@@ -125,19 +128,35 @@ func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domai
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
+	scope, err := scopeByID(workspace.Scopes, skill.ScopeID)
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
 	policies := s.loadSkillPolicies()
 	previous := policies[skill.Path]
 	policy := previous
 	policy.Mode = mode
 	policies[skill.Path] = policy
-	if err := s.syncOpenCodePolicy(skill, mode, &policy); err != nil {
-		return domain.DiscoveryResult{}, err
+	for _, provider := range providersForScope(scope) {
+		if err := s.syncSkillPolicy(skill, scope, provider, mode, &policy); err != nil {
+			return domain.DiscoveryResult{}, err
+		}
 	}
 	policies[skill.Path] = policy
 	if err := s.saveSkillPolicies(policies); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
 	return s.Discover()
+}
+
+func providersForScope(scope domain.Scope) []domain.Provider {
+	if scope.Provider != "" {
+		return []domain.Provider{scope.Provider}
+	}
+	if scope.Kind == "global" || scope.Kind == "project" {
+		return []domain.Provider{domain.ProviderOpenCode, domain.ProviderCodex}
+	}
+	return nil
 }
 
 // RemoveProject stops tracking a project without modifying its directory or skills.
@@ -188,6 +207,9 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	if err := copyDirectory(sourceDir, destinationDir); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
+	if err := removeManagedCodexMetadata(destinationDir); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
 	return s.Discover()
 }
 
@@ -201,11 +223,33 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
+	scope, err := scopeByID(workspace.Scopes, skill.ScopeID)
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	if err := s.removeSkillPolicy(skill, scope); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
 	sourceDir := filepath.Dir(skill.Path)
 	if err := os.RemoveAll(sourceDir); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
 	}
 	return s.Discover()
+}
+
+func (s *DiscoveryService) removeSkillPolicy(skill domain.Skill, scope domain.Scope) error {
+	policies := s.loadSkillPolicies()
+	policy, exists := policies[skill.Path]
+	if !exists {
+		return nil
+	}
+	for _, provider := range providersForScope(scope) {
+		if err := s.syncSkillPolicy(skill, scope, provider, modeAutomatic, &policy); err != nil {
+			return err
+		}
+	}
+	delete(policies, skill.Path)
+	return s.saveSkillPolicies(policies)
 }
 
 func (s *DiscoveryService) skillFromWorkspace(workspace domain.DiscoveryResult, skillPath string) (domain.Skill, error) {

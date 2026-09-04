@@ -95,7 +95,7 @@ func (a *App) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
 	return a.discovery.DeleteSkill(skillPath)
 }
 
-// SetSkillInvocationMode configures how OpenCode may use one skill copy.
+// SetSkillInvocationMode configures how an agent may use one skill copy.
 func (a *App) SetSkillInvocationMode(skillPath, mode string) (domain.DiscoveryResult, error) {
 	return a.discovery.SetSkillInvocationMode(skillPath, mode)
 }

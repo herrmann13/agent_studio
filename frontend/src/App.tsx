@@ -1,10 +1,12 @@
-import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useState} from 'react';
+import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useRef, useState} from 'react';
 import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder, SetSkillInvocationMode} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
 import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
 import codexIcon from './assets/agents/Codex Logo - Colored - zonalogo.com.svg';
 import openCodeIcon from './assets/agents/opencode-logo-light.svg';
 import './App.css';
+
+const usePointerDrag = typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform || navigator.userAgent);
 
 function App() {
     const [workspace, setWorkspace] = useState<domain.DiscoveryResult>();
@@ -24,6 +26,7 @@ function App() {
     const [availableUpdate, setAvailableUpdate] = useState<update.Info>();
     const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
+    const [pointerDropScopeID, setPointerDropScopeID] = useState<string>();
 
     async function refresh() {
         setIsLoading(true);
@@ -70,6 +73,11 @@ function App() {
         } finally {
             setDraggedSkill(undefined);
         }
+    }
+
+    function dropSkillByID(scopeID: string) {
+        const scope = workspace?.scopes.find((item) => item.id === scopeID);
+        if (scope) void dropSkill(scope);
     }
 
     function requestSkillDeletion(skill: domain.Skill) {
@@ -200,8 +208,8 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading label="" title="Global and agents"/>
                 <div className="scope-grid">
-                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/> : null}
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
+                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/> : null}
+                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
                 </div>
             </section>
 
@@ -209,8 +217,9 @@ function App() {
                 <SectionHeading label="PROJECT LAYERS" title="Selected projects"/>
                 {projectScopes.length ? <div className="scope-grid project-grid">
                     {projectScopes.map((scope) => {
-                        const project = workspace?.projects.find((item) => item.id === scope.id.replace('project:', ''));
-                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} onDragStart={setDraggedSkill} onDrop={dropSkill} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
+                        const projectID = scope.id.split(':')[1];
+                        const project = workspace?.projects.find((item) => item.id === projectID);
+                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
                     })}
                 </div> : <p className="empty-projects">Add a project path to create its `.agents/skills` destination.</p>}
             </section>
@@ -235,13 +244,16 @@ function App() {
     );
 }
 
-function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill}: {
+function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, onDragStart, onDrop, onPointerTarget, onPointerDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill}: {
     scope: domain.Scope;
     project?: domain.Project;
     skills: domain.Skill[];
     draggedSkill: domain.Skill | undefined;
+    pointerDropScopeID: string | undefined;
     onDragStart: (skill: domain.Skill) => void;
     onDrop: (scope: domain.Scope) => void;
+    onPointerTarget: (scopeID: string | undefined) => void;
+    onPointerDrop: (scopeID: string) => void;
     onContextMenu: (skill: domain.Skill, x: number, y: number) => void;
     onModeChange: (skill: domain.Skill, mode: string) => void;
     onRemoveProject?: () => void;
@@ -250,7 +262,50 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
     const [isDropTarget, setIsDropTarget] = useState(false);
     const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
     const [projectMenuOpen, setProjectMenuOpen] = useState(false);
+    const pointerDrag = useRef<{pointerID: number; skill: domain.Skill; startX: number; startY: number; active: boolean} | undefined>(undefined);
+    const [pointerPreview, setPointerPreview] = useState<{name: string; x: number; y: number}>();
     const iconSource = scopeIcon(scope);
+
+    function pointerTarget(event: React.PointerEvent) {
+        return (document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-scope-id]') as HTMLElement | null)?.dataset.scopeId;
+    }
+
+    function startPointerDrag(event: React.PointerEvent<HTMLElement>, skill: domain.Skill) {
+        if (!usePointerDrag || event.button !== 0 || (event.target as HTMLElement).closest('button, select, input, textarea')) return;
+        pointerDrag.current = {pointerID: event.pointerId, skill, startX: event.clientX, startY: event.clientY, active: false};
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    function movePointerDrag(event: React.PointerEvent<HTMLElement>) {
+        const drag = pointerDrag.current;
+        if (!drag || drag.pointerID !== event.pointerId) return;
+        if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
+        if (!drag.active) {
+            drag.active = true;
+            onDragStart(drag.skill);
+        }
+        event.preventDefault();
+        setPointerPreview({name: drag.skill.name, x: event.clientX + 14, y: event.clientY + 14});
+        onPointerTarget(pointerTarget(event));
+    }
+
+    function finishPointerDrag(event: React.PointerEvent<HTMLElement>) {
+        const drag = pointerDrag.current;
+        if (!drag || drag.pointerID !== event.pointerId) return;
+        const targetID = drag.active ? pointerTarget(event) : undefined;
+        pointerDrag.current = undefined;
+        setPointerPreview(undefined);
+        onPointerTarget(undefined);
+        if (drag.active && targetID) onPointerDrop(targetID);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    function cancelPointerDrag(event: React.PointerEvent<HTMLElement>) {
+        if (!pointerDrag.current || pointerDrag.current.pointerID !== event.pointerId) return;
+        pointerDrag.current = undefined;
+        setPointerPreview(undefined);
+        onPointerTarget(undefined);
+    }
 
     function toggleSkill(skillID: string) {
         setExpandedSkills((current) => {
@@ -262,7 +317,8 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
     }
 
     return <section
-        className={`scope-lane ${isDropTarget ? 'is-drop-target' : ''}`}
+        data-scope-id={scope.id}
+        className={`scope-lane ${isDropTarget || pointerDropScopeID === scope.id ? 'is-drop-target' : ''}`}
         onDragOver={(event) => { event.preventDefault(); setIsDropTarget(Boolean(draggedSkill && draggedSkill.scopeId !== scope.id)); }}
         onDragLeave={() => setIsDropTarget(false)}
         onDrop={(event) => { event.preventDefault(); setIsDropTarget(false); onDrop(scope); }}
@@ -282,7 +338,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
         <div className="skill-stack">
             {skills.map((skill) => {
                 const isExpanded = expandedSkills.has(skill.id);
-                return <article className={`skill-card ${isExpanded ? 'is-expanded' : ''}`} key={skill.id} draggable onDragStart={() => onDragStart(skill)} onDragEnd={() => setIsDropTarget(false)} onContextMenu={(event) => { event.preventDefault(); onContextMenu(skill, event.clientX, event.clientY); }}>
+                return <article className={`skill-card ${isExpanded ? 'is-expanded' : ''}`} key={skill.id} draggable={!usePointerDrag} onDragStart={(event) => { event.dataTransfer.setData('text/plain', skill.path); event.dataTransfer.effectAllowed = 'copy'; onDragStart(skill); }} onDragEnd={() => setIsDropTarget(false)} onPointerDown={(event) => startPointerDrag(event, skill)} onPointerMove={movePointerDrag} onPointerUp={finishPointerDrag} onPointerCancel={cancelPointerDrag} onContextMenu={(event) => { event.preventDefault(); onContextMenu(skill, event.clientX, event.clientY); }}>
                     <button className="skill-card-toggle" type="button" aria-expanded={isExpanded} onClick={() => toggleSkill(skill.id)}>
                         <strong>{skill.name}</strong>
                         <span className="skill-card-action"><span className="skill-state-count">{skill.states?.length ?? 0}</span><span className="expand-icon" aria-hidden="true">{isExpanded ? '−' : '+'}</span></span>
@@ -291,13 +347,14 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
                         <p>{skill.description}</p>
                         <small>{skill.path}</small>
                         <div className="skill-states">{(skill.states ?? []).map((state) => <span className={state} key={state}>{state}</span>)}</div>
-                        {scope.kind !== 'agent' || scope.provider === 'opencode' ? <label className="skill-mode-label">OpenCode usage<select value={skill.invocationMode || 'automatic'} onChange={(event) => void onModeChange(skill, event.target.value)}><option value="automatic">Automatic</option><option value="always">Always active</option><option value="explicit">Explicit (ask permission)</option><option value="disabled">Disabled</option></select></label> : null}
+                        <label className="skill-mode-label">Usage<select value={skill.invocationMode || 'automatic'} onChange={(event) => void onModeChange(skill, event.target.value)}><option value="automatic">Automatic</option><option value="always">Always active</option><option value="explicit">Explicit</option><option value="disabled">Disabled</option></select></label>
                     </div> : null}
                     <span className="drag-handle" aria-label="Drag to copy">::</span>
                 </article>;
             })}
             {!skills.length ? <p className="lane-placeholder">Drop a skill here to copy it.</p> : null}
         </div>
+        {pointerPreview ? <div className="pointer-drag-preview" style={{left: pointerPreview.x, top: pointerPreview.y}}>{pointerPreview.name}</div> : null}
     </section>;
 }
 

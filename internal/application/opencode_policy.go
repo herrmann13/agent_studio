@@ -23,6 +23,9 @@ type skillPolicy struct {
 	LastPermission     string `json:"lastPermission,omitempty"`
 	PreviousPermission string `json:"previousPermission,omitempty"`
 	HadPrevious        bool   `json:"hadPreviousPermission,omitempty"`
+	ClaudeLastOverride string `json:"claudeLastOverride,omitempty"`
+	ClaudePrevious     string `json:"claudePreviousOverride,omitempty"`
+	ClaudeHadPrevious  bool   `json:"claudeHadPreviousOverride,omitempty"`
 }
 
 func validInvocationMode(mode string) bool {
@@ -200,15 +203,19 @@ func writeJSONConfig(path string, config map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("encode OpenCode config: %w", err)
 	}
+	return writeWithBackup(path, append(content, '\n'), 0o600)
+}
+
+func writeWithBackup(path string, content []byte, mode os.FileMode) error {
 	if existing, readErr := os.ReadFile(path); readErr == nil {
 		backup := filepath.Join(filepath.Dir(path), ".agent-studio-backups", filepath.Base(path)+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".bak")
 		if err := writeAtomic(backup, existing, 0o600); err != nil {
-			return fmt.Errorf("backup OpenCode config: %w", err)
+			return fmt.Errorf("backup %s: %w", path, err)
 		}
 	} else if !os.IsNotExist(readErr) {
-		return fmt.Errorf("inspect OpenCode config: %w", readErr)
+		return fmt.Errorf("inspect %s: %w", path, readErr)
 	}
-	return writeAtomic(path, append(content, '\n'), 0o600)
+	return writeAtomic(path, content, mode)
 }
 
 func writeAtomic(path string, content []byte, mode os.FileMode) error {
