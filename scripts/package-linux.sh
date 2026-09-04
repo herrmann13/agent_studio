@@ -20,7 +20,7 @@ Version: ${VERSION#v}
 Architecture: $ARCH
 Maintainer: Henrique Herrmann <h.herrmann@estudantes.ifg.edu.br>
 Description: Local-first skill workspace for terminal coding agents
-Depends: libgtk-3-0, libwebkit2gtk-4.0-37 | libwebkit2gtk-4.1-0
+Depends: libgtk-3-0, libwebkit2gtk-4.1-0
 EOF
 
 cat > "$PACKAGE_ROOT/usr/share/applications/agent-studio.desktop" <<EOF

@@ -3,7 +3,13 @@ set -euo pipefail
 
 VERSION="${VERSION:-dev}"
 WAILS="${WAILS:-$(go env GOPATH)/bin/wails}"
-read -r -a WAILS_TAGS <<< "${WAILS_TAGS:-}"
 
 [[ -x "$WAILS" ]] || { echo "Wails was not found at $WAILS."; exit 1; }
-"$WAILS" build "${WAILS_TAGS[@]}" -clean -trimpath -ldflags "-X main.version=$VERSION"
+go mod verify
+
+if [[ -n "${WAILS_TAGS:-}" ]]; then
+  read -r -a WAILS_TAGS <<< "$WAILS_TAGS"
+  "$WAILS" build "${WAILS_TAGS[@]}" -clean -trimpath -ldflags "-X main.version=$VERSION"
+else
+  "$WAILS" build -clean -trimpath -ldflags "-X main.version=$VERSION"
+fi

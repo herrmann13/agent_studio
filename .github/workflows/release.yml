@@ -8,13 +8,20 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   validate-tag:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate semantic version tag
         run: |
-          [[ "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
             echo "Tags must use vMAJOR.MINOR.PATCH, optionally with a prerelease suffix."
             exit 1
           }
@@ -26,7 +33,7 @@ jobs:
           - runner: macos-15-intel
             arch: amd64
             binary_arch: x86_64
-          - runner: macos-14
+          - runner: macos-15
             arch: arm64
             binary_arch: arm64
     name: macOS ${{ matrix.arch }}
@@ -43,12 +50,12 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
       - name: Build DMG
-        run: make package-macos VERSION=${{ github.ref_name }}
+        run: make package-macos VERSION="$RELEASE_TAG"
       - name: Validate DMG
         run: |
           test "$(lipo -archs build/bin/agent-studio.app/Contents/MacOS/agent-studio)" = "${{ matrix.binary_arch }}"
           mount_dir=$(mktemp -d)
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "dist/agent-studio-${{ github.ref_name }}-macos-${{ matrix.arch }}.dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "dist/agent-studio-${RELEASE_TAG}-macos-${{ matrix.arch }}.dmg"
           test -d "$mount_dir/agent-studio.app"
           test -L "$mount_dir/Applications"
           hdiutil detach "$mount_dir"
@@ -56,11 +63,11 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos-${{ matrix.arch }}
-          path: dist/agent-studio-${{ github.ref_name }}-macos-${{ matrix.arch }}.dmg
+          path: dist/agent-studio-${{ env.RELEASE_TAG }}-macos-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
   package-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     needs: validate-tag
     steps:
       - uses: actions/checkout@v4
@@ -75,16 +82,27 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
       - name: Build DEB
-        run: make package-linux VERSION=${{ github.ref_name }}
+        run: make package-linux VERSION="$RELEASE_TAG"
+      - name: Validate DEB
+        run: |
+          package="dist/agent-studio-${RELEASE_TAG}-linux-amd64.deb"
+          test -f "$package"
+          test "$(dpkg-deb -f "$package" Package)" = "agent-studio"
+          test "$(dpkg-deb -f "$package" Version)" = "${RELEASE_TAG#v}"
+          test "$(dpkg-deb -f "$package" Depends)" = "libgtk-3-0, libwebkit2gtk-4.1-0"
+          contents="$(dpkg-deb --contents "$package")"
+          [[ "$contents" == *"./usr/bin/agent-studio"* ]]
+          libraries="$(ldd build/bin/agent-studio)"
+          [[ "$libraries" == *"libwebkit2gtk-4.1.so"* ]]
       - uses: actions/upload-artifact@v4
         with:
           name: linux-amd64
-          path: dist/*.deb
+          path: dist/agent-studio-${{ env.RELEASE_TAG }}-linux-amd64.deb
           if-no-files-found: error
 
   publish:
     needs: [package-macos, package-linux]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,8 +112,12 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Generate checksums
-        run: cd dist && sha256sum *.dmg *.deb > SHA256SUMS
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.dmg dist/*.deb)
+          ((${#assets[@]} == 3)) || { echo "Expected two DMGs and one DEB."; exit 1; }
+          sha256sum "${assets[@]}" > dist/SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/* --generate-notes --verify-tag
+        run: gh release create "$RELEASE_TAG" dist/* --generate-notes --verify-tag

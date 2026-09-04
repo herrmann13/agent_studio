@@ -34,7 +34,7 @@ package: ## Create the native package for the current platform.
 	@case "$$(uname -s)" in Darwin) $(MAKE) package-macos VERSION="$(VERSION)" ;; Linux) $(MAKE) package-linux VERSION="$(VERSION)" ;; *) echo "Unsupported platform: $$(uname -s)"; exit 1 ;; esac
 
 package-macos: ## Create a DMG for the current macOS architecture.
-	@VERSION="$(VERSION)" WAILS="$(WAILS)" bash scripts/package-macos.sh
+	@VERSION="$(VERSION)" WAILS="$(WAILS)" WAILS_TAGS="$(WAILS_TAGS)" bash scripts/package-macos.sh
 
 package-linux: ## Create a DEB for the current Linux architecture.
 	@VERSION="$(VERSION)" WAILS="$(WAILS)" WAILS_TAGS="$(WAILS_TAGS)" bash scripts/package-linux.sh

@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,10 +44,13 @@ type Info struct {
 }
 
 type semanticVersion struct {
-	major int
-	minor int
-	patch int
+	major      int
+	minor      int
+	patch      int
+	prerelease string
 }
+
+var semanticVersionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
 
 func Check(ctx context.Context, currentVersion string) (Info, error) {
 	current, err := parseSemanticVersion(currentVersion)
@@ -127,26 +132,23 @@ func fetchLatestRelease(ctx context.Context, currentVersion string) (Release, er
 
 func parseSemanticVersion(raw string) (semanticVersion, error) {
 	raw = strings.TrimPrefix(strings.TrimSpace(raw), "v")
-	parts := strings.Split(raw, ".")
-	if len(parts) != 3 {
-		return semanticVersion{}, fmt.Errorf("%q is not MAJOR.MINOR.PATCH", raw)
+	parts := semanticVersionPattern.FindStringSubmatch(raw)
+	if parts == nil {
+		return semanticVersion{}, fmt.Errorf("%q is not a semantic version", raw)
 	}
-	version := semanticVersion{}
-	values := []*int{&version.major, &version.minor, &version.patch}
-	for index, part := range parts {
-		if part == "" {
-			return semanticVersion{}, fmt.Errorf("%q is not MAJOR.MINOR.PATCH", raw)
-		}
-		for _, character := range part {
-			if character < '0' || character > '9' {
-				return semanticVersion{}, fmt.Errorf("%q is not MAJOR.MINOR.PATCH", raw)
-			}
-		}
-		if _, err := fmt.Sscanf(part, "%d", values[index]); err != nil {
-			return semanticVersion{}, err
-		}
+	major, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return semanticVersion{}, err
 	}
-	return version, nil
+	minor, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return semanticVersion{}, err
+	}
+	patch, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return semanticVersion{}, err
+	}
+	return semanticVersion{major: major, minor: minor, patch: patch, prerelease: parts[4]}, nil
 }
 
 func (v semanticVersion) newerThan(other semanticVersion) bool {
@@ -156,7 +158,63 @@ func (v semanticVersion) newerThan(other semanticVersion) bool {
 	if v.minor != other.minor {
 		return v.minor > other.minor
 	}
-	return v.patch > other.patch
+	if v.patch != other.patch {
+		return v.patch > other.patch
+	}
+	if v.prerelease == "" {
+		return other.prerelease != ""
+	}
+	if other.prerelease == "" {
+		return false
+	}
+	return comparePrerelease(v.prerelease, other.prerelease) > 0
+}
+
+func comparePrerelease(left, right string) int {
+	leftParts := strings.Split(left, ".")
+	rightParts := strings.Split(right, ".")
+	for index := 0; index < len(leftParts) && index < len(rightParts); index++ {
+		if leftParts[index] == rightParts[index] {
+			continue
+		}
+		leftNumber, leftIsNumber := prereleaseNumber(leftParts[index])
+		rightNumber, rightIsNumber := prereleaseNumber(rightParts[index])
+		switch {
+		case leftIsNumber && rightIsNumber:
+			if leftNumber < rightNumber {
+				return -1
+			}
+			return 1
+		case leftIsNumber:
+			return -1
+		case rightIsNumber:
+			return 1
+		case leftParts[index] < rightParts[index]:
+			return -1
+		default:
+			return 1
+		}
+	}
+	if len(leftParts) < len(rightParts) {
+		return -1
+	}
+	if len(leftParts) > len(rightParts) {
+		return 1
+	}
+	return 0
+}
+
+func prereleaseNumber(value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return 0, false
+		}
+	}
+	number, err := strconv.Atoi(value)
+	return number, err == nil
 }
 
 func assetForPlatform(release Release, goos, goarch string) (Asset, error) {

@@ -11,7 +11,7 @@ case "$MACHINE_ARCH" in
   *) echo "Unsupported macOS architecture: $MACHINE_ARCH"; exit 1 ;;
 esac
 
-VERSION="$VERSION" WAILS="$WAILS" bash scripts/build.sh
+VERSION="$VERSION" WAILS="$WAILS" WAILS_TAGS="${WAILS_TAGS:-}" bash scripts/build.sh
 mkdir -p dist
 staging_dir="$(mktemp -d)"
 trap 'rm -rf "$staging_dir"' EXIT

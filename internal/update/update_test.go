@@ -14,7 +14,22 @@ func TestSemanticVersionComparison(t *testing.T) {
 	if !latest.newerThan(current) || current.newerThan(latest) {
 		t.Fatal("incorrect semantic version comparison")
 	}
-	for _, value := range []string{"1", "1.2", "1.2.3-rc.1", "1.a.3"} {
+	prerelease, err := parseSemanticVersion("v0.2.0-rc.2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousPrerelease, err := parseSemanticVersion("v0.2.0-rc.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stable, err := parseSemanticVersion("v0.2.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !prerelease.newerThan(previousPrerelease) || !stable.newerThan(prerelease) || prerelease.newerThan(stable) {
+		t.Fatal("incorrect prerelease comparison")
+	}
+	for _, value := range []string{"1", "1.2", "1.2.3-rc..1", "1.a.3"} {
 		if _, err := parseSemanticVersion(value); err == nil {
 			t.Fatalf("accepted invalid version %q", value)
 		}

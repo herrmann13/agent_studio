@@ -5,4 +5,5 @@ BUN="${BUN:-bun}"
 
 "$BUN" install --cwd frontend --frozen-lockfile
 "$BUN" run --cwd frontend build
+go mod verify
 go test ./...
