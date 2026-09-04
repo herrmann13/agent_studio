@@ -29,6 +29,13 @@ make package VERSION=v0.1.0-rc.1
 
 The frontend uses Bun. Do not create or update `package-lock.json`.
 
+On Ubuntu 24.04 and other Linux distributions that provide WebKitGTK 4.1, `make dev` and the Linux build commands automatically compile Wails with the `webkit2_41` build tag. Install the native build dependencies before developing:
+
+```sh
+sudo apt update
+sudo apt install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+```
+
 ## Releases
 
 GitHub Actions validates pushes and pull requests. Pushing a version tag builds native release artifacts and publishes a GitHub Release:

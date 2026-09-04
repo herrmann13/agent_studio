@@ -9,7 +9,7 @@ PACKAGE_ROOT="$(mktemp -d)"
 trap 'rm -rf "$PACKAGE_ROOT"' EXIT
 command -v dpkg-deb >/dev/null || { echo "dpkg-deb is required to create a DEB package."; exit 1; }
 
-VERSION="$VERSION" WAILS="$WAILS" bash scripts/build.sh
+VERSION="$VERSION" WAILS="$WAILS" WAILS_TAGS="${WAILS_TAGS:-}" bash scripts/build.sh
 mkdir -p "$PACKAGE_ROOT/DEBIAN" "$PACKAGE_ROOT/usr/bin" "$PACKAGE_ROOT/usr/share/applications" "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps" dist
 install -m 0755 build/bin/agent-studio "$PACKAGE_ROOT/usr/bin/agent-studio"
 install -m 0644 build/appicon.png "$PACKAGE_ROOT/usr/share/icons/hicolor/256x256/apps/agent-studio.png"
