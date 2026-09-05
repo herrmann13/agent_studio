@@ -279,6 +279,7 @@ function ScopeLane({scope, project, skills, draggedSkill, onDragStart, onDrop, o
         </div>
         <p className="scope-kind">{scope.kind === 'project' ? 'Project skills' : scope.kind === 'global' ? 'Shared skills' : 'Agent skills'}</p>
         {project ? <code className="project-path" title={project.path}>{project.path}</code> : null}
+        {scope.kind === 'project' && onRemoveProject ? <button className="stop-tracking-button" type="button" onClick={onRemoveProject}>Stop tracking</button> : null}
         <div className="skill-stack">
             {skills.map((skill) => {
                 const isExpanded = expandedSkills.has(skill.id);

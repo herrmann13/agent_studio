@@ -141,6 +141,25 @@ func TestRemoveProjectStopsTrackingWithoutDeletingProjectFiles(t *testing.T) {
 	}
 }
 
+func TestLoadProjectsIgnoresInvalidAndDuplicateEntries(t *testing.T) {
+	home := t.TempDir()
+	projectsPath := filepath.Join(home, ".agent-studio", "projects.json")
+	writeFixture(t, projectsPath, `[
+  {"id":"one","name":"Project","path":"/projects/one"},
+  {"id":"duplicate","name":"Duplicate","path":"/projects/one"},
+  {"id":"","name":"Missing ID","path":"/projects/two"},
+  {"id":"three","name":"Project three","path":"/projects/three"}
+]`)
+
+	projects := NewDiscoveryService(home).loadProjects()
+	if len(projects) != 2 {
+		t.Fatalf("projects = %#v, want only valid unique entries", projects)
+	}
+	if projects[0].ID != "one" || projects[1].ID != "three" {
+		t.Fatalf("projects = %#v, want first valid entry for each path", projects)
+	}
+}
+
 func TestParseRepositoryURL(t *testing.T) {
 	tests := []struct {
 		name, input, owner, repository, branch, directory string

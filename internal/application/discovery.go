@@ -335,7 +335,19 @@ func (s *DiscoveryService) loadProjects() []domain.Project {
 	if json.Unmarshal(content, &projects) != nil {
 		return nil
 	}
-	return projects
+	uniqueProjects := make([]domain.Project, 0, len(projects))
+	seenPaths := make(map[string]struct{}, len(projects))
+	for _, project := range projects {
+		if project.ID == "" || project.Name == "" || project.Path == "" {
+			continue
+		}
+		if _, seen := seenPaths[project.Path]; seen {
+			continue
+		}
+		seenPaths[project.Path] = struct{}{}
+		uniqueProjects = append(uniqueProjects, project)
+	}
+	return uniqueProjects
 }
 
 func (s *DiscoveryService) saveProjects(projects []domain.Project) error {
