@@ -316,7 +316,12 @@ func download(ctx context.Context, currentVersion string, asset Asset, pattern s
 func checksumForAsset(content, name string) (string, error) {
 	for _, line := range strings.Split(content, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) != 2 || fields[1] != name {
+		if len(fields) != 2 {
+			continue
+		}
+		candidate := strings.TrimPrefix(fields[1], "*")
+		candidate = filepath.Base(candidate)
+		if candidate != name {
 			continue
 		}
 		if len(fields[0]) == sha256.Size*2 {

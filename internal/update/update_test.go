@@ -63,4 +63,15 @@ func TestChecksumForAsset(t *testing.T) {
 	if _, err := checksumForAsset("", "missing.deb"); err == nil {
 		t.Fatal("accepted missing checksum")
 	}
+
+	for _, content := range []string{
+		checksum + "  dist/agent-studio-v0.2.0-linux-amd64.deb\n",
+		checksum + "  ./agent-studio-v0.2.0-linux-amd64.deb\n",
+		checksum + "  *agent-studio-v0.2.0-linux-amd64.deb\n",
+	} {
+		got, err := checksumForAsset(content, "agent-studio-v0.2.0-linux-amd64.deb")
+		if err != nil || got != checksum {
+			t.Fatalf("checksumForAsset(%q) = %q, %v; want %q", content, got, err, checksum)
+		}
+	}
 }

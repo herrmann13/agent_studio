@@ -113,10 +113,11 @@ jobs:
           merge-multiple: true
       - name: Generate checksums
         run: |
+          cd dist
           shopt -s nullglob
-          assets=(dist/*.dmg dist/*.deb)
+          assets=(*.dmg *.deb)
           ((${#assets[@]} == 3)) || { echo "Expected two DMGs and one DEB."; exit 1; }
-          sha256sum "${assets[@]}" > dist/SHA256SUMS
+          sha256sum "${assets[@]}" > SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
