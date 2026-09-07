@@ -70,10 +70,7 @@ func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
 	for _, project := range result.Projects {
 		result.Scopes = append(result.Scopes, domain.Scope{
 			ID: "project:" + project.ID, Name: project.Name + " (shared)", Kind: "project", Root: filepath.Join(project.Path, ".agents", "skills"),
-		},
-			domain.Scope{ID: "project:" + project.ID + ":claude", Name: project.Name + " (Claude)", Kind: "project", Provider: domain.ProviderClaude, Root: filepath.Join(project.Path, ".claude", "skills")},
-			domain.Scope{ID: "project:" + project.ID + ":opencode", Name: project.Name + " (OpenCode)", Kind: "project", Provider: domain.ProviderOpenCode, Root: filepath.Join(project.Path, ".opencode", "skills")},
-		)
+		})
 	}
 
 	for _, scope := range result.Scopes {
@@ -154,7 +151,7 @@ func providersForScope(scope domain.Scope) []domain.Provider {
 		return []domain.Provider{scope.Provider}
 	}
 	if scope.Kind == "global" || scope.Kind == "project" {
-		return []domain.Provider{domain.ProviderOpenCode, domain.ProviderCodex}
+		return []domain.Provider{domain.ProviderOpenCode, domain.ProviderClaude, domain.ProviderCodex}
 	}
 	return nil
 }

@@ -174,9 +174,77 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
 	}
-	if len(result.Projects) != 1 || len(result.Scopes) != 7 {
+	if len(result.Projects) != 1 || len(result.Scopes) != 5 {
 		t.Fatalf("unexpected workspace = %#v", result)
 	}
+}
+
+func TestGlobalSkillPublishesToAllAgents(t *testing.T) {
+	home := t.TempDir()
+	skillPath := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, skillPath, "---\nname: testing\ndescription: Write focused tests.\n---\nFollow the test workflow.\n")
+	writeFixture(t, filepath.Join(home, ".config", "opencode", "opencode.json"), "{}")
+	writeFixture(t, filepath.Join(home, ".claude", "settings.json"), "{}")
+	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"\n")
+	service := NewDiscoveryService(home)
+
+	if _, err := service.SetSkillInvocationMode(skillPath, "always"); err != nil {
+		t.Fatalf("SetSkillInvocationMode(always) error = %v", err)
+	}
+
+	opencodeConfig, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(opencodeConfig), "instructions") {
+		t.Fatalf("OpenCode instructions missing: %s", opencodeConfig)
+	}
+
+	claudeMD, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(claudeMD), "BEGIN AGENT STUDIO SKILL") {
+		t.Fatalf("Claude managed instructions missing: %s", claudeMD)
+	}
+
+	codexMD, err := os.ReadFile(filepath.Join(home, ".codex", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(codexMD), "Agent Studio managed skill policy") {
+		t.Fatalf("Codex managed instructions missing: %s", codexMD)
+	}
+}
+
+func TestProjectSkillPublishesToClaudeInProject(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	skillPath := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, skillPath, "---\nname: testing\ndescription: Write focused tests.\n---\nFollow the test workflow.\n")
+	service := NewDiscoveryService(home)
+
+	result, err := service.AddProject(project)
+	if err != nil {
+		t.Fatalf("AddProject() error = %v", err)
+	}
+	if _, err := service.SetSkillInvocationMode(skillPath, "always"); err != nil {
+		t.Fatalf("SetSkillInvocationMode(always) error = %v", err)
+	}
+
+	projectClaudeMD, err := os.ReadFile(filepath.Join(project, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(projectClaudeMD), "BEGIN AGENT STUDIO SKILL") {
+		t.Fatalf("project Claude managed instructions missing: %s", projectClaudeMD)
+	}
+
+	if _, err := os.ReadFile(filepath.Join(home, ".claude", "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("global Claude instructions should not be written for a project skill")
+	}
+
+	_ = result
 }
 
 func TestRemoveProjectStopsTrackingWithoutDeletingProjectFiles(t *testing.T) {
