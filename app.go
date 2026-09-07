@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	goRuntime "runtime"
 
 	"agent-studio/internal/application"
 	"agent-studio/internal/domain"
@@ -47,7 +46,7 @@ func (a *App) DownloadAndInstallUpdate(tagName string) error {
 	if err := update.DownloadAndInstall(context.Background(), version, tagName); err != nil {
 		return err
 	}
-	if goRuntime.GOOS == "darwin" && a.ctx != nil {
+	if a.ctx != nil {
 		runtime.Quit(a.ctx)
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func install(path string) error {
@@ -36,6 +37,41 @@ func installLinux(path string) error {
 	output, err := exec.Command(pkexec, apt, "install", "-y", path).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("could not install update: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return relaunchAfterExit(os.Getpid(), executable)
+}
+
+func relaunchAfterExit(pid int, binary string) error {
+	script, err := os.CreateTemp("", "agent-studio-relaunch-*.sh")
+	if err != nil {
+		return err
+	}
+	scriptPath := script.Name()
+	if _, err := script.WriteString(`#!/bin/sh
+while kill -0 ` + strconv.Itoa(pid) + ` 2>/dev/null; do sleep 1; done
+nohup ` + shellQuote(binary) + ` >/dev/null 2>&1 &
+`); err != nil {
+		script.Close()
+		os.Remove(scriptPath)
+		return err
+	}
+	if err := script.Close(); err != nil {
+		os.Remove(scriptPath)
+		return err
+	}
+	if err := os.Chmod(scriptPath, 0o700); err != nil {
+		os.Remove(scriptPath)
+		return err
+	}
+	command := exec.Command("/bin/sh", scriptPath)
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := command.Start(); err != nil {
+		os.Remove(scriptPath)
+		return err
 	}
 	return nil
 }
