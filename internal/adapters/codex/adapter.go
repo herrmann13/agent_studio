@@ -31,3 +31,11 @@ func (Adapter) SkillRoots(home string) []string {
 		filepath.Join(home, ".codex", "skills"),
 	}
 }
+
+func (Adapter) ProjectSkillRoot(projectPath string) string {
+	return filepath.Join(projectPath, ".codex", "skills")
+}
+
+func (Adapter) Provider() domain.Provider {
+	return domain.ProviderCodex
+}

@@ -179,6 +179,90 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	}
 }
 
+func TestCopySkillToProjectPropagatesToAllAgents(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := NewDiscoveryService(home)
+
+	result, err := service.AddProject(project)
+	if err != nil {
+		t.Fatalf("AddProject() error = %v", err)
+	}
+	var projectScopeID string
+	for _, scope := range result.Scopes {
+		if scope.Kind == "project" {
+			projectScopeID = scope.ID
+		}
+	}
+	if projectScopeID == "" {
+		t.Fatalf("project scope not found = %#v", result.Scopes)
+	}
+
+	source := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, source, "---\nname: Testing\ndescription: Write focused tests.\n---\nBody.\n")
+
+	if _, err := service.CopySkill(source, projectScopeID); err != nil {
+		t.Fatalf("CopySkill() error = %v", err)
+	}
+
+	for _, agentDir := range []string{".claude", ".codex", ".opencode"} {
+		propagated := filepath.Join(project, agentDir, "skills", "testing", "SKILL.md")
+		if _, err := os.Stat(propagated); err != nil {
+			t.Fatalf("propagated skill missing in %s: %v", agentDir, err)
+		}
+	}
+
+	codexMetadata := filepath.Join(project, ".codex", "skills", "testing", "agents", "openai.yaml")
+	metadata, err := os.ReadFile(codexMetadata)
+	if err != nil {
+		t.Fatalf("Codex metadata missing: %v", err)
+	}
+	if !strings.Contains(string(metadata), "name: Testing") {
+		t.Fatalf("Codex metadata name missing: %s", metadata)
+	}
+}
+
+func TestDeleteProjectSkillRemovesPropagatedCopies(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "project")
+	if err := os.MkdirAll(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := NewDiscoveryService(home)
+
+	result, err := service.AddProject(project)
+	if err != nil {
+		t.Fatalf("AddProject() error = %v", err)
+	}
+	var projectScopeID string
+	for _, scope := range result.Scopes {
+		if scope.Kind == "project" {
+			projectScopeID = scope.ID
+		}
+	}
+
+	source := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
+	writeFixture(t, source, "---\nname: Testing\ndescription: Write focused tests.\n---\nBody.\n")
+	if _, err := service.CopySkill(source, projectScopeID); err != nil {
+		t.Fatalf("CopySkill() error = %v", err)
+	}
+
+	projectSkill := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")
+	if _, err := service.DeleteSkill(projectSkill); err != nil {
+		t.Fatalf("DeleteSkill() error = %v", err)
+	}
+
+	for _, agentDir := range []string{".claude", ".codex", ".opencode"} {
+		propagated := filepath.Join(project, agentDir, "skills", "testing", "SKILL.md")
+		if _, err := os.Stat(propagated); !os.IsNotExist(err) {
+			t.Fatalf("propagated skill not removed in %s", agentDir)
+		}
+	}
+}
+
 func TestGlobalSkillPublishesToAllAgents(t *testing.T) {
 	home := t.TempDir()
 	skillPath := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")

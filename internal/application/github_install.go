@@ -68,6 +68,11 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 	if err := copyDirectory(sourceRoot, destination); err != nil {
 		return domain.SkillInstallResult{}, fmt.Errorf("install skill: %w", err)
 	}
+	if target.Kind == "project" {
+		if err := s.propagateToProjectAgents(destination, projectRootFromScopeRoot(target.Root)); err != nil {
+			return domain.SkillInstallResult{}, err
+		}
+	}
 	updated, err := s.Discover()
 	if err != nil {
 		return domain.SkillInstallResult{}, err

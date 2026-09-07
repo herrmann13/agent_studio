@@ -32,3 +32,11 @@ func (Adapter) SkillRoots(home string) []string {
 		filepath.Join(home, ".opencode", "skills"),
 	}
 }
+
+func (Adapter) ProjectSkillRoot(projectPath string) string {
+	return filepath.Join(projectPath, ".opencode", "skills")
+}
+
+func (Adapter) Provider() domain.Provider {
+	return domain.ProviderOpenCode
+}

@@ -6,4 +6,6 @@ import "agent-studio/internal/domain"
 type Adapter interface {
 	Detect(home string) (domain.Agent, *domain.ConfigFile)
 	SkillRoots(home string) []string
+	ProjectSkillRoot(projectPath string) string
+	Provider() domain.Provider
 }

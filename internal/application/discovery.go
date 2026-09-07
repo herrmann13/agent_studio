@@ -207,6 +207,11 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	if err := removeManagedCodexMetadata(destinationDir); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
+	if target.Kind == "project" {
+		if err := s.propagateToProjectAgents(destinationDir, projectRootFromScopeRoot(target.Root)); err != nil {
+			return domain.DiscoveryResult{}, err
+		}
+	}
 	return s.Discover()
 }
 
@@ -230,6 +235,11 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	sourceDir := filepath.Dir(skill.Path)
 	if err := os.RemoveAll(sourceDir); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
+	}
+	if scope.Kind == "project" {
+		if err := s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), filepath.Base(sourceDir)); err != nil {
+			return domain.DiscoveryResult{}, err
+		}
 	}
 	return s.Discover()
 }
