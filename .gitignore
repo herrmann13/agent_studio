@@ -3,3 +3,6 @@ node_modules
 frontend/dist
 .bun/
 /dist/
+vendor/
+.DS_Store
+session-*.md
