@@ -6,3 +6,14 @@ frontend/dist
 vendor/
 .DS_Store
 session-*.md
+
+# Agent Studio runtime artifacts
+.agent-studio-backups/
+.agents/
+
+# Agent-specific local state (generated, per-user)
+.opencode/
+.codex/
+.claude/
+opencode.json
+AGENTS.md
