@@ -12,29 +12,46 @@ No provider assumptions should be added to the frontend or domain layers.
 
 ## Why only Claude gets a propagated copy
 
-Per each provider's own documentation, only Claude Code actually needs a physical,
-independent copy of a Global/Project skill:
+Only Claude Code actually needs a physical, independent copy of a Global/Project
+skill. This was checked two ways: against each provider's published docs, and then
+empirically against the real installed CLIs (`codex debug prompt-input`,
+`opencode debug skill`) — because **the published docs turned out to be wrong or
+incomplete for both Codex and OpenCode**. Trust the empirical findings below over
+the docs if the two ever disagree again.
 
 - **Claude Code** reads only `~/.claude/skills` and `.claude/skills`. It has no
   knowledge of `.agents/skills`, so `Adapter.SkillRoots`/`ProjectSkillRoot` point at a
-  real, separate directory, and `skill_propagation.go` copies into it.
+  real, separate directory, and `skill_propagation.go` copies into it. (Docs and
+  behavior agreed here.)
 - **Codex** reads `.agents/skills` directly — walking from the working directory up
-  to the repository root (repo scope) and `$HOME/.agents/skills` (user scope). These
-  are exactly Agent Studio's own Project and Global scope roots, so `Adapter.SkillRoots`
-  returns nil: there is no separate `.codex/skills` location Codex scans, and showing
-  one as a scope would silently do nothing.
+  to the repository root (repo scope) and `$HOME/.agents/skills` (user scope) — exactly
+  Agent Studio's own Project and Global scope roots. OpenAI's published skills doc
+  ([developers.openai.com/codex/skills](https://developers.openai.com/codex/skills))
+  stops there, but the real CLI (0.153.0) *also* reads `$CODEX_HOME/skills` (defaults
+  to `~/.codex/skills`) and `<project>/.codex/skills`, undocumented. Codex does **not**
+  deduplicate: the same skill name in both roots is listed twice. So `.codex/skills`
+  stays a real, independent scope in the UI, but Global/Project never propagates into
+  it — that would just create a duplicate listing.
 - **OpenCode** reads `.agents/skills` *and* `.claude/skills` natively too (project and
-  global). Its own directory (`.opencode/skills` / `~/.config/opencode/skills`) still
-  exists as a scope for a skill placed independently just for OpenCode, but it is never
-  an automatic propagation target for Global/Project skills — OpenCode already sees
-  those directly, and a redundant same-named copy is a documented cause of a skill
-  failing to load ("ensure skill names are unique across all locations").
+  global) alongside its own directory (`.opencode/skills` project-local,
+  `~/.config/opencode/skills` *and*, also undocumented but confirmed with the real
+  CLI 1.18.20, `~/.opencode/skills` global). Unlike Codex, OpenCode *does* deduplicate
+  by name — but it prefers its own copy over the external one, confirmed by writing
+  conflicting content to both and checking which one it reported. So propagating a
+  copy there would not error, it would just quietly shadow future edits to the
+  canonical skill with a stale duplicate. Its own directory remains a scope for a
+  skill placed independently just for OpenCode, never an automatic propagation target.
+- The Codex `skills.config.path` field in `config.toml`: the published
+  [config reference](https://developers.openai.com/codex/config-reference) describes
+  it as "a skill folder containing SKILL.md", but the real CLI silently ignores a
+  folder there — only the `SKILL.md` file path actually disables the skill. Verified
+  by writing both forms and checking which one removed the skill from
+  `codex debug prompt-input`'s listing.
 
 `internal/application/skill_propagation.go`'s `providersWithIndependentSkillCopy`
-is the single place this is encoded. Sources: [Claude Code skills](https://code.claude.com/docs/en/skills),
-[Codex skills](https://developers.openai.com/codex/skills), [Codex config reference](https://developers.openai.com/codex/config-reference),
-[OpenCode Agent Skills](https://opencode.ai/docs/skills/).
+is the single place the propagation decision is encoded; the file-vs-folder
+`skills.config.path` fix lives in `internal/application/codex_policy.go`.
 
-This was reverse-engineered before being checked against the above docs — if a future
-provider release changes these paths, re-verify against the primary docs rather than
-assuming this file is still accurate.
+If a future provider release changes any of this, re-verify against the installed
+CLI directly (there's usually a `debug` subcommand that dumps what it actually
+discovered) rather than trusting that provider's own docs alone.

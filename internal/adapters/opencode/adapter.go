@@ -26,13 +26,18 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 	return domain.Agent{ID: "opencode", Name: "OpenCode", Provider: domain.ProviderOpenCode, Status: status, ConfigPath: configPath, CommandPath: commandPath}, config
 }
 
-// SkillRoots returns OpenCode's own global skill directory. OpenCode also reads
-// `~/.agents/skills` and `~/.claude/skills` natively (see ProjectSkillRoot), so
-// Global- and Project-scope skills are never propagated here; this directory
-// remains available for a skill placed independently, just for OpenCode.
+// SkillRoots returns OpenCode's own global skill directories. Confirmed empirically
+// (OpenCode 1.18.20, `opencode debug skill`) that OpenCode reads both paths, even
+// though only the first is documented; discovery.go only scans roots[0], so
+// `.config/opencode/skills` is the one Agent Studio treats as OpenCode's scope.
+// OpenCode also reads `~/.agents/skills` and `~/.claude/skills` natively, and (also
+// confirmed empirically) prefers its own copy by name over those when both exist --
+// so Global/Project skills are never propagated here: doing so would shadow the
+// canonical copy with a duplicate that silently goes stale.
 func (Adapter) SkillRoots(home string) []string {
 	return []string{
 		filepath.Join(home, ".config", "opencode", "skills"),
+		filepath.Join(home, ".opencode", "skills"),
 	}
 }
 

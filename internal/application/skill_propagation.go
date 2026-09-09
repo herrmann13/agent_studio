@@ -40,19 +40,25 @@ func (s *DiscoveryService) propagateToGlobalAgents(sourceDir string) error {
 }
 
 // providersWithIndependentSkillCopy lists the agents that actually need a physical,
-// separate copy of a Global/Project skill. Per each provider's own documentation:
+// separate copy of a Global/Project skill, rather than already seeing it at its
+// canonical `.agents/skills` path. Confirmed empirically against the real CLIs, not
+// just their docs (which turned out to be incomplete for Codex and OpenCode):
 //   - Claude Code only ever reads `~/.claude/skills` and `.claude/skills` — it has no
 //     knowledge of `.agents/skills`, so it needs a real copy to see the skill at all.
 //   - Codex reads `.agents/skills` (repo scope, walking to the repository root) and
 //     `$HOME/.agents/skills` (user scope) directly — the same canonical directories
-//     Agent Studio already uses for Project and Global scope.
+//     Agent Studio already uses for Project and Global scope. It ALSO reads its own
+//     `.codex/skills`/`$CODEX_HOME/skills` (undocumented, found by running
+//     `codex debug prompt-input`), but does not deduplicate: a copy placed there
+//     under the same name is listed twice.
 //   - OpenCode reads `.agents/skills` and `.claude/skills` natively too (both project
-//     and global). Once Claude's copy exists, OpenCode already sees it there.
+//     and global) alongside its own directory. Unlike Codex it does deduplicate by
+//     name, but (confirmed with `opencode debug skill`) it prefers its own copy over
+//     the external one — so a stale propagated copy would silently shadow edits made
+//     to the canonical skill instead of erroring or disappearing.
 //
-// Copying into Codex's or OpenCode's own directory on top of that would create a
-// second copy under the same skill name, which OpenCode's own docs call out as a
-// cause of a skill silently failing to load ("ensure skill names are unique across
-// all locations").
+// Either way, copying into Codex's or OpenCode's own directory on top of the
+// canonical one is actively worse than not copying at all, so only Claude gets one.
 func providersWithIndependentSkillCopy() map[domain.Provider]bool {
 	return map[domain.Provider]bool{domain.ProviderClaude: true}
 }

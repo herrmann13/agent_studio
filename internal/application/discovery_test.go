@@ -174,8 +174,8 @@ func TestSkillInvocationModesSyncClaude(t *testing.T) {
 func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	home := t.TempDir()
 	// Codex reads `.agents/skills` (repo scope) and `$HOME/.agents/skills` (user
-	// scope) directly -- it has no independent `.codex/skills` directory of its own
-	// -- so the skill lives in Global, exactly where Codex will actually find it.
+	// scope) directly, in addition to its own `.codex/skills` -- so a Global-scope
+	// skill under `.agents/skills` is exactly where Codex will actually find it.
 	skillPath := filepath.Join(home, ".agents", "skills", "review", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
 	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"\n")
@@ -202,11 +202,11 @@ func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	if !strings.Contains(string(config), "enabled = false") {
 		t.Fatalf("Codex disabled policy missing: %s", config)
 	}
-	// The config reference defines skills.config.path as the skill's folder, not the
-	// SKILL.md file inside it.
-	skillFolder := filepath.Join(home, ".agents", "skills", "review")
-	if !strings.Contains(string(config), fmt.Sprintf("path = %q", skillFolder)) {
-		t.Fatalf("Codex disabled entry should reference the skill folder %q: %s", skillFolder, config)
+	// The published config reference describes skills.config.path as the skill's
+	// folder, but that's wrong -- confirmed empirically that only the SKILL.md file
+	// path actually disables the skill.
+	if !strings.Contains(string(config), fmt.Sprintf("path = %q", skillPath)) {
+		t.Fatalf("Codex disabled entry should reference the SKILL.md file %q: %s", skillPath, config)
 	}
 }
 
@@ -220,9 +220,8 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
 	}
-	// global, opencode (agent), claude (agent), and the tracked project. Codex has no
-	// scope of its own: it reads `.agents/skills` directly (see SkillRoots).
-	if len(result.Projects) != 1 || len(result.Scopes) != 4 {
+	// global, opencode (agent), claude (agent), codex (agent), and the tracked project.
+	if len(result.Projects) != 1 || len(result.Scopes) != 5 {
 		t.Fatalf("unexpected workspace = %#v", result)
 	}
 }

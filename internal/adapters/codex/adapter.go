@@ -26,20 +26,23 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 	return domain.Agent{ID: "codex", Name: "Codex", Provider: domain.ProviderCodex, Status: status, ConfigPath: configPath, CommandPath: commandPath}, config
 }
 
-// SkillRoots returns no independent directory: per OpenAI's documented Codex skill
-// discovery (REPO/USER/ADMIN/SYSTEM scopes), Codex only ever reads `.agents/skills`
-// (repo scope, walking up to the repository root) and `$HOME/.agents/skills` (user
-// scope) — the same canonical directories Agent Studio already treats as the Project
-// and Global scopes. There is no separate `.codex/skills` location Codex scans, so
-// showing one as a distinct, copyable scope would silently do nothing for Codex.
+// SkillRoots returns Codex's own skill directory. Confirmed empirically (Codex CLI
+// 0.153.0, `codex debug prompt-input`) that Codex reads `$CODEX_HOME/skills` (which
+// defaults to here) IN ADDITION to `.agents/skills` -- OpenAI's own published skills
+// doc only documents the latter, so don't trust that doc alone for this. Codex does
+// not deduplicate: the same skill name present in both roots is listed twice. So
+// Global/Project skills are never propagated here (see skill_propagation.go); this
+// directory remains available for a skill placed independently, just for Codex.
 func (Adapter) SkillRoots(home string) []string {
-	return nil
+	return []string{
+		filepath.Join(home, ".codex", "skills"),
+	}
 }
 
-// ProjectSkillRoot is unused: Codex has no independent per-project skill directory to
-// propagate into (see SkillRoots). It documents the real path Codex reads instead.
+// ProjectSkillRoot returns Codex's own project-local skill directory (also confirmed
+// empirically). As with SkillRoots, this is never a propagation target.
 func (Adapter) ProjectSkillRoot(projectPath string) string {
-	return filepath.Join(projectPath, ".agents", "skills")
+	return filepath.Join(projectPath, ".codex", "skills")
 }
 
 func (Adapter) Provider() domain.Provider {
