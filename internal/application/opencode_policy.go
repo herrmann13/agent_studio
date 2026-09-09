@@ -147,7 +147,7 @@ func (s *DiscoveryService) syncOpenCodePolicy(skill domain.Skill, mode string, p
 		delete(config, "permission")
 	}
 
-	return writeJSONConfig(configPath, config)
+	return s.writeJSONConfig(configPath, config)
 }
 
 func (s *DiscoveryService) openCodeConfigPath(skill domain.Skill) string {
@@ -198,17 +198,29 @@ func readJSONConfig(path string) (map[string]interface{}, error) {
 	return config, nil
 }
 
-func writeJSONConfig(path string, config map[string]interface{}) error {
+func (s *DiscoveryService) writeJSONConfig(path string, config map[string]interface{}) error {
 	content, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode OpenCode config: %w", err)
 	}
-	return writeWithBackup(path, append(content, '\n'), 0o600)
+	return s.writeWithBackup(path, append(content, '\n'), 0o600)
 }
 
-func writeWithBackup(path string, content []byte, mode os.FileMode) error {
+// backupDirectory keeps every native config backup under Agent Studio's own state
+// directory instead of scattering ".agent-studio-backups" folders across the
+// user's home, agent configs, and tracked project repositories.
+func (s *DiscoveryService) backupDirectory() string {
+	return filepath.Join(s.home, ".agent-studio", "backups")
+}
+
+func (s *DiscoveryService) writeWithBackup(path string, content []byte, mode os.FileMode) error {
 	if existing, readErr := os.ReadFile(path); readErr == nil {
-		backup := filepath.Join(filepath.Dir(path), ".agent-studio-backups", filepath.Base(path)+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".bak")
+		absolutePath, err := filepath.Abs(path)
+		if err != nil {
+			absolutePath = path
+		}
+		flattened := strings.NewReplacer(string(filepath.Separator), "_", ":", "_").Replace(strings.TrimPrefix(absolutePath, string(filepath.Separator)))
+		backup := filepath.Join(s.backupDirectory(), flattened+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".bak")
 		if err := writeAtomic(backup, existing, 0o600); err != nil {
 			return fmt.Errorf("backup %s: %w", path, err)
 		}

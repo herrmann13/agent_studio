@@ -34,10 +34,10 @@ func (s *DiscoveryService) syncClaudePolicy(skill domain.Skill, scope domain.Sco
 		}
 		marker := claudeManagedStart + skill.ID + " -->"
 		block := marker + "\n@" + instructionsPath + "\n" + claudeManagedEnd
-		if err := updateManagedMarkdown(claudeMDPath, marker, claudeManagedEnd, block, true); err != nil {
+		if err := s.updateManagedMarkdown(claudeMDPath, marker, claudeManagedEnd, block, true); err != nil {
 			return err
 		}
-	} else if err := updateManagedMarkdown(claudeMDPath, claudeManagedStart+skill.ID+" -->", claudeManagedEnd, "", false); err != nil {
+	} else if err := s.updateManagedMarkdown(claudeMDPath, claudeManagedStart+skill.ID+" -->", claudeManagedEnd, "", false); err != nil {
 		return err
 	}
 
@@ -82,10 +82,10 @@ func (s *DiscoveryService) syncClaudePolicy(skill domain.Skill, scope domain.Sco
 	} else {
 		delete(config, "skillOverrides")
 	}
-	return writeJSONConfig(settingsPath, config)
+	return s.writeJSONConfig(settingsPath, config)
 }
 
-func updateManagedMarkdown(path, marker, endMarker, block string, enabled bool) error {
+func (s *DiscoveryService) updateManagedMarkdown(path, marker, endMarker, block string, enabled bool) error {
 	content, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		if !enabled {
@@ -114,5 +114,5 @@ func updateManagedMarkdown(path, marker, endMarker, block string, enabled bool) 
 	if text == string(content) {
 		return nil
 	}
-	return writeWithBackup(path, []byte(text), 0o644)
+	return s.writeWithBackup(path, []byte(text), 0o644)
 }

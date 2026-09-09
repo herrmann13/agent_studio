@@ -55,7 +55,9 @@ var semanticVersionPattern = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)
 func Check(ctx context.Context, currentVersion string) (Info, error) {
 	current, err := parseSemanticVersion(currentVersion)
 	if err != nil {
-		return Info{}, fmt.Errorf("invalid installed version %q: %w", currentVersion, err)
+		// Local and CI builds report "dev" instead of a released version. There is
+		// nothing to compare against, so report no update rather than failing.
+		return Info{CurrentVersion: currentVersion, UpdateAvailable: false}, nil
 	}
 	release, err := fetchLatestRelease(ctx, currentVersion)
 	if err != nil {

@@ -27,7 +27,7 @@ func (s *DiscoveryService) syncCodexPolicy(skill domain.Skill, scope domain.Scop
 		}
 		marker := codexManagedMarker + skill.ID
 		block := marker + "\n" + string(content) + "\n# End Agent Studio managed skill policy"
-		if err := updateManagedMarkdown(instructionsFile, marker, "# End Agent Studio managed skill policy", block, true); err != nil {
+		if err := s.updateManagedMarkdown(instructionsFile, marker, "# End Agent Studio managed skill policy", block, true); err != nil {
 			return err
 		}
 	} else {
@@ -35,7 +35,7 @@ func (s *DiscoveryService) syncCodexPolicy(skill domain.Skill, scope domain.Scop
 		if scope.Kind == "project" {
 			instructionsFile = filepath.Join(filepath.Dir(filepath.Dir(scope.Root)), "AGENTS.md")
 		}
-		if err := updateManagedMarkdown(instructionsFile, codexManagedMarker+skill.ID, "# End Agent Studio managed skill policy", "", false); err != nil {
+		if err := s.updateManagedMarkdown(instructionsFile, codexManagedMarker+skill.ID, "# End Agent Studio managed skill policy", "", false); err != nil {
 			return err
 		}
 	}
@@ -116,7 +116,7 @@ func addCodexDisabledEntry(s *DiscoveryService, scope domain.Scope, skillPath st
 		return nil
 	}
 	block := fmt.Sprintf("\n%s\n[[skills.config]]\npath = %q\nenabled = false\n# End Agent Studio managed skill policy\n", marker, skillPath)
-	return writeWithBackup(path, append(content, []byte(block)...), 0o600)
+	return s.writeWithBackup(path, append(content, []byte(block)...), 0o600)
 }
 
 func removeCodexDisabledEntry(s *DiscoveryService, scope domain.Scope, skillPath string) error {
@@ -140,5 +140,5 @@ func removeCodexDisabledEntry(s *DiscoveryService, scope domain.Scope, skillPath
 	}
 	end := start + endRelative + len("# End Agent Studio managed skill policy")
 	text = strings.TrimRight(text[:start], "\n") + text[end:]
-	return writeWithBackup(path, []byte(text), 0o600)
+	return s.writeWithBackup(path, []byte(text), 0o600)
 }

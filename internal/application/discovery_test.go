@@ -54,14 +54,46 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 		t.Fatalf("skills = %d, want 2", len(result.Skills))
 	}
 
+	// Global is now the canonical source that fans out to every agent's native
+	// skill root (mirroring how a project's `.agents/skills` already fans out to
+	// its agents), so deleting the global copy also removes the copies it owns
+	// in each agent scope, including this one manually placed under "codex".
 	if _, err := service.DeleteSkill(source); err != nil {
 		t.Fatalf("DeleteSkill() error = %v", err)
 	}
 	if _, err := os.Stat(source); !os.IsNotExist(err) {
 		t.Fatalf("deleted global skill still exists: %v", err)
 	}
-	if _, err := os.Stat(destination); err != nil {
-		t.Fatalf("agent skill was deleted: %v", err)
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("propagated agent skill was not removed: %v", err)
+	}
+}
+
+func TestCopyToGlobalPropagatesToEveryAgent(t *testing.T) {
+	home := t.TempDir()
+	service := NewDiscoveryService(home)
+	source := filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md")
+	writeFixture(t, source, "---\nname: testing\ndescription: Write focused tests.\n---\n")
+
+	if _, err := service.CopySkill(source, "global"); err != nil {
+		t.Fatalf("CopySkill() error = %v", err)
+	}
+	for _, nativeSkillPath := range []string{
+		filepath.Join(home, ".claude", "skills", "testing", "SKILL.md"),
+		filepath.Join(home, ".codex", "skills", "testing", "SKILL.md"),
+		filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md"),
+	} {
+		if _, err := os.Stat(nativeSkillPath); err != nil {
+			t.Fatalf("skill was not propagated to %s: %v", nativeSkillPath, err)
+		}
+	}
+
+	result, err := service.DeleteSkill(filepath.Join(home, ".agents", "skills", "testing", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("DeleteSkill() error = %v", err)
+	}
+	if len(result.Skills) != 0 {
+		t.Fatalf("skills = %d, want 0 after removing the global copy and its propagated copies", len(result.Skills))
 	}
 }
 
@@ -432,6 +464,44 @@ func TestFindSkillRootSupportsGitAndZIPLayouts(t *testing.T) {
 				t.Errorf("findSkillRoot() = %q, want %q", actual, expected)
 			}
 		})
+	}
+}
+
+func TestParseSkillIgnoresMetadataLooksLikeLinesInTheBody(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "SKILL.md")
+	writeFixture(t, path, "---\nname: Testing\ndescription: Write focused tests.\n---\n"+
+		"# Testing\n\nExample config:\n\nname: not-the-skill-name\ndescription: not the real description\n")
+
+	skill, err := parseSkill(path)
+	if err != nil {
+		t.Fatalf("parseSkill() error = %v", err)
+	}
+	if skill.Name != "Testing" {
+		t.Errorf("Name = %q, want %q (body text must not override frontmatter)", skill.Name, "Testing")
+	}
+	if skill.Description != "Write focused tests." {
+		t.Errorf("Description = %q, want %q (body text must not override frontmatter)", skill.Description, "Write focused tests.")
+	}
+}
+
+func TestCopyDirectoryPreservesExecutablePermissions(t *testing.T) {
+	source := t.TempDir()
+	scriptPath := filepath.Join(source, "scripts", "run.sh")
+	writeFixture(t, scriptPath, "#!/bin/sh\necho hi\n")
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatalf("chmod fixture: %v", err)
+	}
+
+	destination := filepath.Join(t.TempDir(), "copy")
+	if err := copyDirectory(source, destination); err != nil {
+		t.Fatalf("copyDirectory() error = %v", err)
+	}
+	info, err := os.Stat(filepath.Join(destination, "scripts", "run.sh"))
+	if err != nil {
+		t.Fatalf("copied script is missing: %v", err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("copied script lost its executable bit: mode = %v", info.Mode())
 	}
 }
 

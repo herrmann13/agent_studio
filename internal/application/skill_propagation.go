@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"agent-studio/internal/adapters"
 )
 
 // projectRootFromScopeRoot derives the project directory from a project scope's
@@ -17,9 +19,32 @@ func projectRootFromScopeRoot(scopeRoot string) string {
 // The source (`.agents/skills/<skill>`) remains the canonical copy and wins: existing
 // propagated copies are replaced unconditionally.
 func (s *DiscoveryService) propagateToProjectAgents(sourceDir, projectPath string) error {
+	return s.propagateToAgentRoots(sourceDir, func(adapter adapters.Adapter) string {
+		return adapter.ProjectSkillRoot(projectPath)
+	})
+}
+
+// propagateToGlobalAgents copies a skill directory into every agent's canonical
+// global skill location so all supported agents can use it regardless of project.
+// The source (`~/.agents/skills/<skill>`) remains the canonical copy and wins: existing
+// propagated copies are replaced unconditionally.
+func (s *DiscoveryService) propagateToGlobalAgents(sourceDir string) error {
+	return s.propagateToAgentRoots(sourceDir, func(adapter adapters.Adapter) string {
+		roots := adapter.SkillRoots(s.home)
+		if len(roots) == 0 {
+			return ""
+		}
+		return roots[0]
+	})
+}
+
+func (s *DiscoveryService) propagateToAgentRoots(sourceDir string, rootFor func(adapters.Adapter) string) error {
 	skillDirName := filepath.Base(sourceDir)
 	for _, adapter := range s.adapters {
-		root := adapter.ProjectSkillRoot(projectPath)
+		root := rootFor(adapter)
+		if root == "" {
+			continue
+		}
 		destination := filepath.Join(root, skillDirName)
 		if err := copyDirectoryForce(sourceDir, destination); err != nil {
 			return fmt.Errorf("propagate skill to %s: %w", root, err)
@@ -55,8 +80,29 @@ func ensureCodexMetadata(skillDir string) error {
 // removePropagatedCopies removes a skill's propagated copies from each agent's
 // project-level skill location without touching the canonical `.agents/skills` copy.
 func (s *DiscoveryService) removePropagatedCopies(projectPath, skillDirName string) error {
+	return s.removePropagatedCopiesFromRoots(skillDirName, func(adapter adapters.Adapter) string {
+		return adapter.ProjectSkillRoot(projectPath)
+	})
+}
+
+// removePropagatedGlobalCopies removes a skill's propagated copies from each agent's
+// global skill location without touching the canonical `~/.agents/skills` copy.
+func (s *DiscoveryService) removePropagatedGlobalCopies(skillDirName string) error {
+	return s.removePropagatedCopiesFromRoots(skillDirName, func(adapter adapters.Adapter) string {
+		roots := adapter.SkillRoots(s.home)
+		if len(roots) == 0 {
+			return ""
+		}
+		return roots[0]
+	})
+}
+
+func (s *DiscoveryService) removePropagatedCopiesFromRoots(skillDirName string, rootFor func(adapters.Adapter) string) error {
 	for _, adapter := range s.adapters {
-		root := adapter.ProjectSkillRoot(projectPath)
+		root := rootFor(adapter)
+		if root == "" {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(root, skillDirName)); err != nil {
 			return fmt.Errorf("remove propagated skill from %s: %w", root, err)
 		}

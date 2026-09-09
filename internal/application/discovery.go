@@ -207,10 +207,8 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	if err := removeManagedCodexMetadata(destinationDir); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	if target.Kind == "project" {
-		if err := s.propagateToProjectAgents(destinationDir, projectRootFromScopeRoot(target.Root)); err != nil {
-			return domain.DiscoveryResult{}, err
-		}
+	if err := s.propagateSkillCopy(target, destinationDir); err != nil {
+		return domain.DiscoveryResult{}, err
 	}
 	return s.Discover()
 }
@@ -236,12 +234,35 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	if err := os.RemoveAll(sourceDir); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
 	}
-	if scope.Kind == "project" {
-		if err := s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), filepath.Base(sourceDir)); err != nil {
-			return domain.DiscoveryResult{}, err
-		}
+	if err := s.removePropagatedCopiesForScope(scope, filepath.Base(sourceDir)); err != nil {
+		return domain.DiscoveryResult{}, err
 	}
 	return s.Discover()
+}
+
+// propagateSkillCopy fans a scope's canonical skill copy out to every agent's
+// native skill location for that scope (global or project), so it is discoverable
+// without depending on Agent Studio's own scope directory.
+func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir string) error {
+	switch scope.Kind {
+	case "project":
+		return s.propagateToProjectAgents(skillDir, projectRootFromScopeRoot(scope.Root))
+	case "global":
+		return s.propagateToGlobalAgents(skillDir)
+	default:
+		return nil
+	}
+}
+
+func (s *DiscoveryService) removePropagatedCopiesForScope(scope domain.Scope, skillDirName string) error {
+	switch scope.Kind {
+	case "project":
+		return s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), skillDirName)
+	case "global":
+		return s.removePropagatedGlobalCopies(skillDirName)
+	default:
+		return nil
+	}
 }
 
 func (s *DiscoveryService) removeSkillPolicy(skill domain.Skill, scope domain.Scope) error {
@@ -315,21 +336,32 @@ func parseSkill(path string) (domain.Skill, error) {
 	description := "No description provided."
 	var firstContent string
 	metadataNameFound := false
+	inFrontmatter := false
+	frontmatterClosed := false
 	scanner := bufio.NewScanner(strings.NewReader(string(content)))
-	for scanner.Scan() {
+	for lineNumber := 0; scanner.Scan(); lineNumber++ {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "name:") {
-			name, metadataNameFound = cleanMetadataValue(strings.TrimPrefix(line, "name:")), true
+		if line == "---" && !frontmatterClosed {
+			if lineNumber == 0 {
+				inFrontmatter = true
+			} else if inFrontmatter {
+				inFrontmatter = false
+				frontmatterClosed = true
+			}
 			continue
 		}
-		if strings.HasPrefix(line, "description:") {
-			description = cleanMetadataValue(strings.TrimPrefix(line, "description:"))
+		if inFrontmatter {
+			if strings.HasPrefix(line, "name:") {
+				name, metadataNameFound = cleanMetadataValue(strings.TrimPrefix(line, "name:")), true
+			} else if strings.HasPrefix(line, "description:") {
+				description = cleanMetadataValue(strings.TrimPrefix(line, "description:"))
+			}
 			continue
 		}
 		if strings.HasPrefix(line, "# ") && !metadataNameFound {
 			name = strings.TrimSpace(strings.TrimPrefix(line, "# "))
 		}
-		if firstContent == "" && line != "" && !strings.HasPrefix(line, "---") && !strings.Contains(line, ":") && !strings.HasPrefix(line, "#") {
+		if firstContent == "" && line != "" && !strings.Contains(line, ":") && !strings.HasPrefix(line, "#") {
 			firstContent = line
 		}
 	}
@@ -422,15 +454,22 @@ func copyDirectory(source, destination string) error {
 			return err
 		}
 		target := filepath.Join(destination, relativePath)
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("skill contains unsupported symlink: %q", path)
+		}
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
 		}
 		input, err := os.Open(path)
 		if err != nil {
 			return err
 		}
 		defer input.Close()
-		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
 			return err
 		}
