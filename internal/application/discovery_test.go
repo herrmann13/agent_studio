@@ -1,9 +1,11 @@
 package application
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -502,6 +504,40 @@ func TestCopyDirectoryPreservesExecutablePermissions(t *testing.T) {
 	}
 	if info.Mode().Perm()&0o111 == 0 {
 		t.Errorf("copied script lost its executable bit: mode = %v", info.Mode())
+	}
+}
+
+// TestConcurrentAddProjectDoesNotLoseWrites guards against the read-modify-write race on
+// projects.json: Wails dispatches each JS call on its own goroutine, so without
+// DiscoveryService's mutex, concurrent AddProject calls can each read the same
+// projects.json, append their own entry, and overwrite each other on save.
+func TestConcurrentAddProjectDoesNotLoseWrites(t *testing.T) {
+	home := t.TempDir()
+	service := NewDiscoveryService(home)
+	const projectCount = 20
+
+	var wg sync.WaitGroup
+	for index := 0; index < projectCount; index++ {
+		projectPath := filepath.Join(t.TempDir(), fmt.Sprintf("project-%d", index))
+		if err := os.MkdirAll(projectPath, 0o755); err != nil {
+			t.Fatalf("create project directory: %v", err)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := service.AddProject(projectPath); err != nil {
+				t.Errorf("AddProject() error = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	result, err := service.Discover()
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	if len(result.Projects) != projectCount {
+		t.Fatalf("projects = %d, want %d (concurrent AddProject calls lost writes)", len(result.Projects), projectCount)
 	}
 }
 

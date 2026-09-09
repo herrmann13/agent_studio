@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"agent-studio/internal/adapters"
@@ -20,9 +21,15 @@ import (
 )
 
 // DiscoveryService inventories and manages local skills. All writes are explicit operations.
+//
+// Wails dispatches each JS-to-Go call on its own goroutine, so two near-simultaneous
+// UI actions (a fast double-drop, or the update poller firing during a copy) would
+// otherwise race on the same projects.json/skill-policies.json files and native
+// configs. mu serializes every public operation so state changes stay consistent.
 type DiscoveryService struct {
 	home     string
 	adapters []adapters.Adapter
+	mu       sync.Mutex
 }
 
 func NewDiscoveryService(home string) *DiscoveryService {
@@ -39,6 +46,15 @@ func DefaultDiscoveryService() (*DiscoveryService, error) {
 
 // Discover returns the complete, read-only workspace inventory.
 func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.discover()
+}
+
+// discover is the unlocked implementation. Every public, state-changing method below
+// already holds s.mu for its whole operation, so they call discover() directly
+// instead of Discover() to avoid deadlocking on a non-reentrant mutex.
+func (s *DiscoveryService) discover() (domain.DiscoveryResult, error) {
 	result := domain.DiscoveryResult{
 		Agents:      []domain.Agent{},
 		Skills:      []domain.Skill{},
@@ -90,6 +106,8 @@ func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
 
 // AddProject persists a selected project. Its generic .agents/skills directory is then tracked.
 func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("resolve project path: %w", err)
@@ -101,7 +119,7 @@ func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, erro
 	projects := s.loadProjects()
 	for _, project := range projects {
 		if project.Path == absPath {
-			return s.Discover()
+			return s.discover()
 		}
 	}
 	hash := sha256.Sum256([]byte(absPath))
@@ -109,15 +127,17 @@ func (s *DiscoveryService) AddProject(path string) (domain.DiscoveryResult, erro
 	if err := s.saveProjects(projects); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	return s.Discover()
+	return s.discover()
 }
 
 // SetSkillInvocationMode persists a per-copy policy and synchronizes its agent.
 func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domain.DiscoveryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if !validInvocationMode(mode) {
 		return domain.DiscoveryResult{}, fmt.Errorf("invalid skill invocation mode %q", mode)
 	}
-	workspace, err := s.Discover()
+	workspace, err := s.discover()
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
@@ -143,7 +163,7 @@ func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domai
 	if err := s.saveSkillPolicies(policies); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	return s.Discover()
+	return s.discover()
 }
 
 func providersForScope(scope domain.Scope) []domain.Provider {
@@ -158,6 +178,8 @@ func providersForScope(scope domain.Scope) []domain.Provider {
 
 // RemoveProject stops tracking a project without modifying its directory or skills.
 func (s *DiscoveryService) RemoveProject(projectID string) (domain.DiscoveryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	projects := s.loadProjects()
 	filtered := make([]domain.Project, 0, len(projects))
 	found := false
@@ -174,12 +196,14 @@ func (s *DiscoveryService) RemoveProject(projectID string) (domain.DiscoveryResu
 	if err := s.saveProjects(filtered); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	return s.Discover()
+	return s.discover()
 }
 
 // CopySkill copies the complete skill directory to a selected scope. The source remains unchanged.
 func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult, error) {
-	workspace, err := s.Discover()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace, err := s.discover()
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
@@ -210,12 +234,14 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	if err := s.propagateSkillCopy(target, destinationDir); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	return s.Discover()
+	return s.discover()
 }
 
 // DeleteSkill permanently removes the selected skill directory. The caller must confirm this action.
 func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
-	workspace, err := s.Discover()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace, err := s.discover()
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
@@ -237,7 +263,7 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	if err := s.removePropagatedCopiesForScope(scope, filepath.Base(sourceDir)); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	return s.Discover()
+	return s.discover()
 }
 
 // propagateSkillCopy fans a scope's canonical skill copy out to every agent's

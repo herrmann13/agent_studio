@@ -63,3 +63,9 @@ type DiscoveryResult struct {
 	Projects    []Project    `json:"projects"`
 	ScannedAt   string       `json:"scannedAt"`
 }
+
+// SkillInstallResult reports how a skill installed from a repository URL was fetched.
+type SkillInstallResult struct {
+	Workspace DiscoveryResult `json:"workspace"`
+	Method    string          `json:"method"`
+}

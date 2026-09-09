@@ -19,11 +19,13 @@ import (
 
 // InstallSkillFromURL prefers a shallow Git clone and falls back to a public archive.
 func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (domain.SkillInstallResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	owner, repository, branch, subdirectory, host, err := parseRepositoryURL(rawURL)
 	if err != nil {
 		return domain.SkillInstallResult{}, err
 	}
-	workspace, err := s.Discover()
+	workspace, err := s.discover()
 	if err != nil {
 		return domain.SkillInstallResult{}, err
 	}
@@ -71,7 +73,7 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 	if err := s.propagateSkillCopy(target, destination); err != nil {
 		return domain.SkillInstallResult{}, err
 	}
-	updated, err := s.Discover()
+	updated, err := s.discover()
 	if err != nil {
 		return domain.SkillInstallResult{}, err
 	}

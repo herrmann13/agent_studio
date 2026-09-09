@@ -370,10 +370,6 @@ function SectionHeading({label, title}: {label: string; title: string}) {
     return <div className="section-heading"><p>{label}</p><h2>{title}</h2></div>;
 }
 
-function Metric({value, label}: {value: number; label: string}) {
-    return <div className="metric"><strong>{value}</strong><span>{label}</span></div>;
-}
-
 function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
     target: domain.Scope;
     skills: domain.Skill[];
