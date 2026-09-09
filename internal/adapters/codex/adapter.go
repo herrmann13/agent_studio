@@ -26,14 +26,20 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 	return domain.Agent{ID: "codex", Name: "Codex", Provider: domain.ProviderCodex, Status: status, ConfigPath: configPath, CommandPath: commandPath}, config
 }
 
+// SkillRoots returns no independent directory: per OpenAI's documented Codex skill
+// discovery (REPO/USER/ADMIN/SYSTEM scopes), Codex only ever reads `.agents/skills`
+// (repo scope, walking up to the repository root) and `$HOME/.agents/skills` (user
+// scope) — the same canonical directories Agent Studio already treats as the Project
+// and Global scopes. There is no separate `.codex/skills` location Codex scans, so
+// showing one as a distinct, copyable scope would silently do nothing for Codex.
 func (Adapter) SkillRoots(home string) []string {
-	return []string{
-		filepath.Join(home, ".codex", "skills"),
-	}
+	return nil
 }
 
+// ProjectSkillRoot is unused: Codex has no independent per-project skill directory to
+// propagate into (see SkillRoots). It documents the real path Codex reads instead.
 func (Adapter) ProjectSkillRoot(projectPath string) string {
-	return filepath.Join(projectPath, ".codex", "skills")
+	return filepath.Join(projectPath, ".agents", "skills")
 }
 
 func (Adapter) Provider() domain.Provider {

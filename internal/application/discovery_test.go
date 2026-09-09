@@ -15,7 +15,7 @@ func TestDiscoverClassifiesSkillStatesByScope(t *testing.T) {
 	writeFixture(t, filepath.Join(home, ".claude", "settings.json"), "{}")
 	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"")
 	writeFixture(t, filepath.Join(home, ".agents", "skills", "testing", "SKILL.md"), "---\nname: Testing\ndescription: Write focused tests.\n---\n")
-	writeFixture(t, filepath.Join(home, ".codex", "skills", "testing", "SKILL.md"), "---\nname: Testing\ndescription: Write focused tests.\n---\n")
+	writeFixture(t, filepath.Join(home, ".claude", "skills", "testing", "SKILL.md"), "---\nname: Testing\ndescription: Write focused tests.\n---\n")
 
 	result, err := NewDiscoveryService(home).Discover()
 	if err != nil {
@@ -39,27 +39,26 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 	service := NewDiscoveryService(home)
 	source := filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")
 	writeFixture(t, source, "# Testing\n")
-	writeFixture(t, filepath.Join(filepath.Dir(source), "agents", "openai.yaml"), "# Agent Studio managed invocation policy\npolicy:\n  allow_implicit_invocation: false\n")
 
-	result, err := service.CopySkill(source, "codex")
+	// Claude Code only ever reads `~/.claude/skills` and `.claude/skills` -- it has
+	// no notion of `.agents/skills` -- so it is the one agent scope that still needs
+	// (and accepts) an explicit, independent copy.
+	result, err := service.CopySkill(source, "claude")
 	if err != nil {
 		t.Fatalf("CopySkill() error = %v", err)
 	}
-	destination := filepath.Join(home, ".codex", "skills", "testing", "SKILL.md")
+	destination := filepath.Join(home, ".claude", "skills", "testing", "SKILL.md")
 	if _, err := os.Stat(destination); err != nil {
 		t.Fatalf("copied skill is missing: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(filepath.Dir(destination), "agents", "openai.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("managed Codex metadata leaked into copied skill: %v", err)
 	}
 	if len(result.Skills) != 2 {
 		t.Fatalf("skills = %d, want 2", len(result.Skills))
 	}
 
-	// Global is now the canonical source that fans out to every agent's native
-	// skill root (mirroring how a project's `.agents/skills` already fans out to
-	// its agents), so deleting the global copy also removes the copies it owns
-	// in each agent scope, including this one manually placed under "codex".
+	// Global is the canonical source that fans out to Claude's native skill root
+	// (mirroring how a project's `.agents/skills` already fans out the same way), so
+	// deleting the global copy also removes the copy it owns in Claude's scope,
+	// including this one manually placed there.
 	if _, err := service.DeleteSkill(source); err != nil {
 		t.Fatalf("DeleteSkill() error = %v", err)
 	}
@@ -67,11 +66,11 @@ func TestCopyAndDeleteSkill(t *testing.T) {
 		t.Fatalf("deleted global skill still exists: %v", err)
 	}
 	if _, err := os.Stat(destination); !os.IsNotExist(err) {
-		t.Fatalf("propagated agent skill was not removed: %v", err)
+		t.Fatalf("propagated Claude skill was not removed: %v", err)
 	}
 }
 
-func TestCopyToGlobalPropagatesToEveryAgent(t *testing.T) {
+func TestCopyToGlobalPropagatesOnlyToClaude(t *testing.T) {
 	home := t.TempDir()
 	service := NewDiscoveryService(home)
 	source := filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md")
@@ -80,22 +79,26 @@ func TestCopyToGlobalPropagatesToEveryAgent(t *testing.T) {
 	if _, err := service.CopySkill(source, "global"); err != nil {
 		t.Fatalf("CopySkill() error = %v", err)
 	}
-	for _, nativeSkillPath := range []string{
-		filepath.Join(home, ".claude", "skills", "testing", "SKILL.md"),
-		filepath.Join(home, ".codex", "skills", "testing", "SKILL.md"),
-		filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md"),
-	} {
-		if _, err := os.Stat(nativeSkillPath); err != nil {
-			t.Fatalf("skill was not propagated to %s: %v", nativeSkillPath, err)
-		}
+
+	claudeCopy := filepath.Join(home, ".claude", "skills", "testing", "SKILL.md")
+	if _, err := os.Stat(claudeCopy); err != nil {
+		t.Fatalf("skill was not propagated to Claude: %v", err)
 	}
 
-	result, err := service.DeleteSkill(filepath.Join(home, ".agents", "skills", "testing", "SKILL.md"))
-	if err != nil {
+	// Codex and OpenCode already read `.agents/skills` (and OpenCode also reads
+	// `.claude/skills`) natively -- both project- and user/global-scoped -- so Global
+	// must not also create a redundant, same-named copy in their own directories.
+	// OpenCode's own docs call that out as a cause of a skill silently failing to load
+	// ("ensure skill names are unique across all locations").
+	if _, err := os.Stat(filepath.Join(home, ".codex", "skills", "testing", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("Codex should not receive a propagated copy: %v", err)
+	}
+
+	if _, err := service.DeleteSkill(filepath.Join(home, ".agents", "skills", "testing", "SKILL.md")); err != nil {
 		t.Fatalf("DeleteSkill() error = %v", err)
 	}
-	if len(result.Skills) != 0 {
-		t.Fatalf("skills = %d, want 0 after removing the global copy and its propagated copies", len(result.Skills))
+	if _, err := os.Stat(claudeCopy); !os.IsNotExist(err) {
+		t.Fatalf("Claude's propagated copy was not removed: %v", err)
 	}
 }
 
@@ -170,7 +173,10 @@ func TestSkillInvocationModesSyncClaude(t *testing.T) {
 
 func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	home := t.TempDir()
-	skillPath := filepath.Join(home, ".codex", "skills", "review", "SKILL.md")
+	// Codex reads `.agents/skills` (repo scope) and `$HOME/.agents/skills` (user
+	// scope) directly -- it has no independent `.codex/skills` directory of its own
+	// -- so the skill lives in Global, exactly where Codex will actually find it.
+	skillPath := filepath.Join(home, ".agents", "skills", "review", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
 	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"\n")
 	service := NewDiscoveryService(home)
@@ -178,7 +184,7 @@ func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err != nil {
 		t.Fatalf("Codex explicit mode error = %v", err)
 	}
-	metadata, err := os.ReadFile(filepath.Join(home, ".codex", "skills", "review", "agents", "openai.yaml"))
+	metadata, err := os.ReadFile(filepath.Join(home, ".agents", "skills", "review", "agents", "openai.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,6 +202,12 @@ func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	if !strings.Contains(string(config), "enabled = false") {
 		t.Fatalf("Codex disabled policy missing: %s", config)
 	}
+	// The config reference defines skills.config.path as the skill's folder, not the
+	// SKILL.md file inside it.
+	skillFolder := filepath.Join(home, ".agents", "skills", "review")
+	if !strings.Contains(string(config), fmt.Sprintf("path = %q", skillFolder)) {
+		t.Fatalf("Codex disabled entry should reference the skill folder %q: %s", skillFolder, config)
+	}
 }
 
 func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
@@ -208,12 +220,14 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
 	}
-	if len(result.Projects) != 1 || len(result.Scopes) != 5 {
+	// global, opencode (agent), claude (agent), and the tracked project. Codex has no
+	// scope of its own: it reads `.agents/skills` directly (see SkillRoots).
+	if len(result.Projects) != 1 || len(result.Scopes) != 4 {
 		t.Fatalf("unexpected workspace = %#v", result)
 	}
 }
 
-func TestCopySkillToProjectPropagatesToAllAgents(t *testing.T) {
+func TestCopySkillToProjectPropagatesOnlyToClaude(t *testing.T) {
 	home := t.TempDir()
 	project := filepath.Join(home, "project")
 	if err := os.MkdirAll(project, 0o755); err != nil {
@@ -242,20 +256,19 @@ func TestCopySkillToProjectPropagatesToAllAgents(t *testing.T) {
 		t.Fatalf("CopySkill() error = %v", err)
 	}
 
-	for _, agentDir := range []string{".claude", ".codex", ".opencode"} {
-		propagated := filepath.Join(project, agentDir, "skills", "testing", "SKILL.md")
-		if _, err := os.Stat(propagated); err != nil {
-			t.Fatalf("propagated skill missing in %s: %v", agentDir, err)
-		}
+	claudeCopy := filepath.Join(project, ".claude", "skills", "testing", "SKILL.md")
+	if _, err := os.Stat(claudeCopy); err != nil {
+		t.Fatalf("propagated skill missing in .claude: %v", err)
 	}
 
-	codexMetadata := filepath.Join(project, ".codex", "skills", "testing", "agents", "openai.yaml")
-	metadata, err := os.ReadFile(codexMetadata)
-	if err != nil {
-		t.Fatalf("Codex metadata missing: %v", err)
-	}
-	if !strings.Contains(string(metadata), "name: Testing") {
-		t.Fatalf("Codex metadata name missing: %s", metadata)
+	// Codex reads the project's `.agents/skills` directly (repo scope) and OpenCode
+	// reads both `.agents/skills` and `.claude/skills` in the project natively, so
+	// neither needs -- or should receive -- its own duplicate copy.
+	for _, agentDir := range []string{".codex", ".opencode"} {
+		propagated := filepath.Join(project, agentDir, "skills", "testing", "SKILL.md")
+		if _, err := os.Stat(propagated); !os.IsNotExist(err) {
+			t.Fatalf("%s should not receive a propagated copy: %v", agentDir, err)
+		}
 	}
 }
 
@@ -282,6 +295,10 @@ func TestDeleteProjectSkillRemovesPropagatedCopies(t *testing.T) {
 	writeFixture(t, source, "---\nname: Testing\ndescription: Write focused tests.\n---\nBody.\n")
 	if _, err := service.CopySkill(source, projectScopeID); err != nil {
 		t.Fatalf("CopySkill() error = %v", err)
+	}
+	claudeCopy := filepath.Join(project, ".claude", "skills", "testing", "SKILL.md")
+	if _, err := os.Stat(claudeCopy); err != nil {
+		t.Fatalf("propagated skill missing in .claude before deletion: %v", err)
 	}
 
 	projectSkill := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")

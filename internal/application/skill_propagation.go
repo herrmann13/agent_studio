@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"agent-studio/internal/adapters"
+	"agent-studio/internal/domain"
 )
 
 // projectRootFromScopeRoot derives the project directory from a project scope's
@@ -38,9 +39,31 @@ func (s *DiscoveryService) propagateToGlobalAgents(sourceDir string) error {
 	})
 }
 
+// providersWithIndependentSkillCopy lists the agents that actually need a physical,
+// separate copy of a Global/Project skill. Per each provider's own documentation:
+//   - Claude Code only ever reads `~/.claude/skills` and `.claude/skills` — it has no
+//     knowledge of `.agents/skills`, so it needs a real copy to see the skill at all.
+//   - Codex reads `.agents/skills` (repo scope, walking to the repository root) and
+//     `$HOME/.agents/skills` (user scope) directly — the same canonical directories
+//     Agent Studio already uses for Project and Global scope.
+//   - OpenCode reads `.agents/skills` and `.claude/skills` natively too (both project
+//     and global). Once Claude's copy exists, OpenCode already sees it there.
+//
+// Copying into Codex's or OpenCode's own directory on top of that would create a
+// second copy under the same skill name, which OpenCode's own docs call out as a
+// cause of a skill silently failing to load ("ensure skill names are unique across
+// all locations").
+func providersWithIndependentSkillCopy() map[domain.Provider]bool {
+	return map[domain.Provider]bool{domain.ProviderClaude: true}
+}
+
 func (s *DiscoveryService) propagateToAgentRoots(sourceDir string, rootFor func(adapters.Adapter) string) error {
 	skillDirName := filepath.Base(sourceDir)
+	needsCopy := providersWithIndependentSkillCopy()
 	for _, adapter := range s.adapters {
+		if !needsCopy[adapter.Provider()] {
+			continue
+		}
 		root := rootFor(adapter)
 		if root == "" {
 			continue
@@ -49,32 +72,8 @@ func (s *DiscoveryService) propagateToAgentRoots(sourceDir string, rootFor func(
 		if err := copyDirectoryForce(sourceDir, destination); err != nil {
 			return fmt.Errorf("propagate skill to %s: %w", root, err)
 		}
-		if adapter.Provider() == "codex" {
-			if err := ensureCodexMetadata(destination); err != nil {
-				return err
-			}
-		}
 	}
 	return nil
-}
-
-// ensureCodexMetadata writes a minimal Codex agent metadata file so Codex registers
-// the skill. It preserves an existing non-empty metadata file if one is present.
-func ensureCodexMetadata(skillDir string) error {
-	metadataPath := filepath.Join(skillDir, "agents", "openai.yaml")
-	if _, err := os.Stat(metadataPath); err == nil {
-		return nil
-	}
-	skillMarkdown := filepath.Join(skillDir, "SKILL.md")
-	skill, err := parseSkill(skillMarkdown)
-	if err != nil {
-		return fmt.Errorf("parse skill for Codex metadata: %w", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(metadataPath), 0o755); err != nil {
-		return err
-	}
-	content := fmt.Sprintf("name: %s\ndescription: %q\n", skill.Name, skill.Description)
-	return writeAtomic(metadataPath, []byte(content), 0o644)
 }
 
 // removePropagatedCopies removes a skill's propagated copies from each agent's
@@ -98,7 +97,11 @@ func (s *DiscoveryService) removePropagatedGlobalCopies(skillDirName string) err
 }
 
 func (s *DiscoveryService) removePropagatedCopiesFromRoots(skillDirName string, rootFor func(adapters.Adapter) string) error {
+	needsCopy := providersWithIndependentSkillCopy()
 	for _, adapter := range s.adapters {
+		if !needsCopy[adapter.Provider()] {
+			continue
+		}
 		root := rootFor(adapter)
 		if root == "" {
 			continue

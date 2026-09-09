@@ -115,7 +115,9 @@ func addCodexDisabledEntry(s *DiscoveryService, scope domain.Scope, skillPath st
 	if strings.Contains(string(content), marker) {
 		return nil
 	}
-	block := fmt.Sprintf("\n%s\n[[skills.config]]\npath = %q\nenabled = false\n# End Agent Studio managed skill policy\n", marker, skillPath)
+	// Codex's config reference defines skills.config.path as "path to a skill folder
+	// containing SKILL.md" — the directory, not the SKILL.md file itself.
+	block := fmt.Sprintf("\n%s\n[[skills.config]]\npath = %q\nenabled = false\n# End Agent Studio managed skill policy\n", marker, filepath.Dir(skillPath))
 	return s.writeWithBackup(path, append(content, []byte(block)...), 0o600)
 }
 

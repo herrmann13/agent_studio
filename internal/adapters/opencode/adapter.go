@@ -26,13 +26,20 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 	return domain.Agent{ID: "opencode", Name: "OpenCode", Provider: domain.ProviderOpenCode, Status: status, ConfigPath: configPath, CommandPath: commandPath}, config
 }
 
+// SkillRoots returns OpenCode's own global skill directory. OpenCode also reads
+// `~/.agents/skills` and `~/.claude/skills` natively (see ProjectSkillRoot), so
+// Global- and Project-scope skills are never propagated here; this directory
+// remains available for a skill placed independently, just for OpenCode.
 func (Adapter) SkillRoots(home string) []string {
 	return []string{
 		filepath.Join(home, ".config", "opencode", "skills"),
-		filepath.Join(home, ".opencode", "skills"),
 	}
 }
 
+// ProjectSkillRoot returns OpenCode's own project-local skill directory. As with
+// SkillRoots, this is never a propagation target for Global or Project scope
+// skills: OpenCode already discovers `.agents/skills` and `.claude/skills` in the
+// project natively.
 func (Adapter) ProjectSkillRoot(projectPath string) string {
 	return filepath.Join(projectPath, ".opencode", "skills")
 }
