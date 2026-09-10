@@ -20,7 +20,7 @@ Everything runs locally. No cloud, no accounts, no telemetry.
 ## Features
 
 - **Discover your setup** — a read-only scan of your installed agents (OpenCode, Claude Code, and Codex) and the skills each one has.
-- **Organize with scopes** — skills live in three places: **Global** (shared everywhere), **Agent** (per tool), and **Project** (per repository).
+- **Organize with scopes** — skills live in two places: **Agent** (per tool) and **Project** (per repository).
 - **Copy with drag-and-drop** — move a skill from one scope to another with a simple drag.
 - **Track projects** — add a project folder to get a dedicated `.agents/skills` destination for it.
 - **Install from URL** — paste a public GitHub, GitLab, or Bitbucket repository and install a skill into any scope (Git clone with a ZIP fallback).
@@ -42,7 +42,7 @@ Download the latest installer from the [Releases](https://github.com/herrmann13/
 ## Getting started
 
 1. Launch Agent Studio. It scans your machine for OpenCode, Claude Code, and Codex automatically.
-2. **Track a project** to create its skill destination, or use the global and per-agent scopes.
+2. **Track a project** to create its skill destination, or use the per-agent scopes.
 3. **Copy skills** between scopes by dragging them, or **install** one from a public repository URL.
 4. Set a **usage mode** on any skill to change how the agent may invoke it.
 5. Check for **updates** from the toolbar to stay current.

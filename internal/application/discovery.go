@@ -64,9 +64,6 @@ func (s *DiscoveryService) discover() (domain.DiscoveryResult, error) {
 		ScannedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	result.Projects = s.loadProjects()
-	result.Scopes = append(result.Scopes, domain.Scope{
-		ID: "global", Name: "Global", Kind: "global", Root: filepath.Join(s.home, ".agents", "skills"),
-	})
 
 	for _, adapter := range s.adapters {
 		agent, config := adapter.Detect(s.home)
@@ -170,7 +167,7 @@ func providersForScope(scope domain.Scope) []domain.Provider {
 	if scope.Provider != "" {
 		return []domain.Provider{scope.Provider}
 	}
-	if scope.Kind == "global" || scope.Kind == "project" {
+	if scope.Kind == "project" {
 		return []domain.Provider{domain.ProviderOpenCode, domain.ProviderClaude, domain.ProviderCodex}
 	}
 	return nil
@@ -266,29 +263,21 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	return s.discover()
 }
 
-// propagateSkillCopy fans a scope's canonical skill copy out to every agent's
-// native skill location for that scope (global or project), so it is discoverable
-// without depending on Agent Studio's own scope directory.
+// propagateSkillCopy fans a project scope's canonical skill copy out to every
+// agent's native skill location for that project, so it is discoverable without
+// depending on Agent Studio's own scope directory.
 func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir string) error {
-	switch scope.Kind {
-	case "project":
-		return s.propagateToProjectAgents(skillDir, projectRootFromScopeRoot(scope.Root))
-	case "global":
-		return s.propagateToGlobalAgents(skillDir)
-	default:
+	if scope.Kind != "project" {
 		return nil
 	}
+	return s.propagateToProjectAgents(skillDir, projectRootFromScopeRoot(scope.Root))
 }
 
 func (s *DiscoveryService) removePropagatedCopiesForScope(scope domain.Scope, skillDirName string) error {
-	switch scope.Kind {
-	case "project":
-		return s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), skillDirName)
-	case "global":
-		return s.removePropagatedGlobalCopies(skillDirName)
-	default:
+	if scope.Kind != "project" {
 		return nil
 	}
+	return s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), skillDirName)
 }
 
 func (s *DiscoveryService) removeSkillPolicy(skill domain.Skill, scope domain.Scope) error {
@@ -343,10 +332,7 @@ func discoverSkills(scope domain.Scope) ([]domain.Skill, error) {
 			return err
 		}
 		skill.ScopeID = scope.ID
-		skill.States = []string{"available"}
-		if scope.Kind != "global" {
-			skill.States = append(skill.States, "associated")
-		}
+		skill.States = []string{"available", "associated"}
 		skills = append(skills, skill)
 		return nil
 	})

@@ -20,7 +20,7 @@ function App() {
     const [message, setMessage] = useState<string>();
     const [isLoading, setIsLoading] = useState(true);
     const [skillURL, setSkillURL] = useState('');
-    const [skillTargetID, setSkillTargetID] = useState('global');
+    const [skillTargetID, setSkillTargetID] = useState('');
     const [isInstalling, setIsInstalling] = useState(false);
     const [isInstallDialogOpen, setIsInstallDialogOpen] = useState(false);
     const [availableUpdate, setAvailableUpdate] = useState<update.Info>();
@@ -184,9 +184,13 @@ function App() {
     }
 
     const scopes = workspace?.scopes ?? [];
-    const globalScope = scopes.find((scope) => scope.kind === 'global');
     const agentScopes = scopes.filter((scope) => scope.kind === 'agent');
     const projectScopes = scopes.filter((scope) => scope.kind === 'project');
+
+    useEffect(() => {
+        if (skillTargetID && scopes.some((scope) => scope.id === skillTargetID)) return;
+        if (scopes.length) setSkillTargetID(scopes[0].id);
+    }, [scopes, skillTargetID]);
 
     return (
         <main className="studio-shell" onClick={() => contextMenu && setContextMenu(undefined)}>
@@ -206,9 +210,8 @@ function App() {
             {message ? <p className="workspace-message">{message}</p> : null}
 
             <section className="workspace-section">
-                <SectionHeading label="" title="Global and agents"/>
+                <SectionHeading label="" title="Agents"/>
                 <div className="scope-grid">
-                    {globalScope ? <ScopeLane scope={globalScope} skills={skillsInScope(workspace, globalScope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/> : null}
                     {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
                 </div>
             </section>
@@ -324,7 +327,7 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
         onDrop={(event) => { event.preventDefault(); setIsDropTarget(false); onDrop(scope); }}
     >
         <div className="scope-heading">
-            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? '🌎' : 'P'}</span><strong>{scope.name}</strong></div>
+            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : 'P'}</span><strong>{scope.name}</strong></div>
             <div className="scope-actions">
                 <span>{skills.length}</span>
                 {scope.kind === 'project' && onRemoveProject ? <div className="project-menu-wrap">
@@ -333,7 +336,7 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
                 </div> : null}
             </div>
         </div>
-        <p className="scope-kind">{scope.kind === 'project' ? 'Project skills' : scope.kind === 'global' ? 'Shared skills' : 'Agent skills'}</p>
+        <p className="scope-kind">{scope.kind === 'project' ? 'Project skills' : 'Agent skills'}</p>
         {project ? <code className="project-path" title={project.path}>{project.path}</code> : null}
         {scope.kind === 'project' && onRemoveProject ? <button className="stop-tracking-button" type="button" onClick={onRemoveProject}>Stop tracking</button> : null}
         <div className="skill-stack">

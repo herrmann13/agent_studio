@@ -31,7 +31,7 @@ func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
 // defaults to here) IN ADDITION to `.agents/skills` -- OpenAI's own published skills
 // doc only documents the latter, so don't trust that doc alone for this. Codex does
 // not deduplicate: the same skill name present in both roots is listed twice. So
-// Global/Project skills are never propagated here (see skill_propagation.go); this
+// Project skills are never propagated here (see skill_propagation.go); this
 // directory remains available for a skill placed independently, just for Codex.
 func (Adapter) SkillRoots(home string) []string {
 	return []string{
