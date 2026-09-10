@@ -11,11 +11,29 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
 	"agent-studio/internal/domain"
 )
+
+// npxInstallCommandPattern matches the `npx skills add <repo-url> --skill <name>` shorthand,
+// mirroring the CLI convention where a skill lives under <repo>/skills/<name> on the main branch.
+var npxInstallCommandPattern = regexp.MustCompile(`(?i)^npx\s+skills\s+add\s+(\S+)\s+--skill(?:=|\s+)(\S+)$`)
+
+// resolveInstallInput rewrites an `npx skills add` command into the equivalent repository tree URL
+// so it can be parsed by parseRepositoryURL alongside plain URLs.
+func resolveInstallInput(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	match := npxInstallCommandPattern.FindStringSubmatch(trimmed)
+	if match == nil {
+		return trimmed
+	}
+	repositoryURL := strings.Trim(strings.TrimSuffix(match[1], "/"), `"'`)
+	skillName := strings.Trim(match[2], `"'`)
+	return fmt.Sprintf("%s/tree/main/skills/%s", repositoryURL, skillName)
+}
 
 // InstallSkillFromURL prefers a shallow Git clone and falls back to a public archive.
 func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (domain.SkillInstallResult, error) {
@@ -81,7 +99,7 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 }
 
 func parseRepositoryURL(rawURL string) (owner, repository, branch, subdirectory, host string, err error) {
-	parsed, parseErr := url.Parse(strings.TrimSpace(rawURL))
+	parsed, parseErr := url.Parse(resolveInstallInput(rawURL))
 	if parseErr != nil || parsed.Scheme != "https" {
 		return "", "", "", "", "", fmt.Errorf("only public HTTPS repository URLs are supported")
 	}

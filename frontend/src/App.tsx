@@ -210,14 +210,14 @@ function App() {
             {message ? <p className="workspace-message">{message}</p> : null}
 
             <section className="workspace-section">
-                <SectionHeading label="" title="Agents"/>
+                <SectionHeading title="Agents"/>
                 <div className="scope-grid">
                     {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
                 </div>
             </section>
 
             <section className="workspace-section">
-                <SectionHeading label="PROJECT LAYERS" title="Selected projects"/>
+                <SectionHeading title="Selected projects"/>
                 {projectScopes.length ? <div className="scope-grid project-grid">
                     {projectScopes.map((scope) => {
                         const projectID = scope.id.split(':')[1];
@@ -369,8 +369,8 @@ function scopeIcon(scope: domain.Scope) {
     return undefined;
 }
 
-function SectionHeading({label, title}: {label: string; title: string}) {
-    return <div className="section-heading"><p>{label}</p><h2>{title}</h2></div>;
+function SectionHeading({title}: {title: string}) {
+    return <div className="section-heading"><h2>{title}</h2></div>;
 }
 
 function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
@@ -387,7 +387,7 @@ function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
 
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="skill-modal" role="dialog" aria-modal="true" aria-labelledby="add-skill-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><div><p className="section-kicker">PROJECT SKILLS</p><h2 id="add-skill-title">Add skill to {target.name}</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose}>×</button></div>
+            <div className="modal-heading"><h2 id="add-skill-title">Add skill to {target.name}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose}>×</button></div>
             <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search skills by name or description" autoFocus/>
             <div className="modal-skill-list">
                 {availableSkills.map((skill) => {
@@ -412,11 +412,12 @@ function InstallSkillDialog({url, targetID, scopes, isInstalling, onURLChange, o
 }) {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-skill-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><div><p className="section-kicker">PUBLIC REPOSITORY</p><h2 id="install-skill-title">Install skill</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isInstalling}>×</button></div>
-            <p className="install-help">Paste a public GitHub, GitLab, or Bitbucket repository URL. Agent Studio will use Git when available and ZIP otherwise.</p>
+            <div className="modal-heading"><h2 id="install-skill-title">Install skill</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isInstalling}>×</button></div>
+            <p className="install-help">Paste a public GitHub, GitLab, or Bitbucket repository URL, or an <code>npx skills add</code> command. Agent Studio will use Git when available and ZIP otherwise.</p>
             <form className="install-dialog-form" onSubmit={onSubmit}>
-                <label htmlFor="skill-url">Repository or skill folder URL</label>
+                <label htmlFor="skill-url">Repository URL or npx command</label>
                 <input id="skill-url" value={url} onChange={(event) => onURLChange(event.target.value)} placeholder="https://github.com/owner/repository/tree/main/skills/my-skill" autoFocus required/>
+                <small className="install-hint">Also accepts <code>npx skills add https://github.com/owner/repository --skill my-skill</code></small>
                 <label htmlFor="skill-target">Install into</label>
                 <select id="skill-target" value={targetID} onChange={(event) => onTargetChange(event.target.value)} required>{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
                 <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isInstalling}>Cancel</button><button type="submit" className="install-submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button></div>
@@ -433,7 +434,7 @@ function UpdateDialog({update, isUpdating, onInstall, onClose}: {
 }) {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="update-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><div><p className="section-kicker">UPDATE AVAILABLE</p><h2 id="update-title">{update.latestVersion}</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isUpdating}>×</button></div>
+            <div className="modal-heading"><h2 id="update-title">Update to {update.latestVersion}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isUpdating}>×</button></div>
             <p className="install-help">You are using {update.currentVersion}. The installer will be downloaded, verified, and installed automatically.</p>
             {update.releaseNotes ? <pre className="update-notes">{update.releaseNotes}</pre> : null}
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isUpdating}>Later</button><button type="button" className="install-submit" onClick={onInstall} disabled={isUpdating}>{isUpdating ? 'Installing...' : 'Download and install'}</button></div>
@@ -449,7 +450,7 @@ function DeleteSkillDialog({skill, isDeleting, onDelete, onClose}: {
 }) {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><div><p className="section-kicker">DELETE SKILL</p><h2 id="delete-skill-title">Delete {skill.name}?</h2></div><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
+            <div className="modal-heading"><h2 id="delete-skill-title">Delete {skill.name}?</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
             <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>
             <code title={skill.path}>{skill.path}</code>
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button><button type="button" className="delete-confirm" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete skill'}</button></div>
@@ -483,7 +484,7 @@ class ErrorBoundary extends Component<{children: ReactNode}, {error?: Error}> {
 
     render() {
         if (!this.state.error) return this.props.children;
-        return <main className="fatal-error"><p className="eyebrow">AGENT STUDIO</p><h1>Could not render the workspace</h1><p>{this.state.error.message}</p><button onClick={() => window.location.reload()}>Reload</button></main>;
+        return <main className="fatal-error"><h1>Could not render the workspace</h1><p>{this.state.error.message}</p><button onClick={() => window.location.reload()}>Reload</button></main>;
     }
 }
 

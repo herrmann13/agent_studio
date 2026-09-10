@@ -352,6 +352,9 @@ func TestParseRepositoryURL(t *testing.T) {
 	}{
 		{"repository", "https://github.com/acme/skills", "acme", "skills", "main", ""},
 		{"skill folder", "https://github.com/acme/skills/tree/develop/packages/testing", "acme", "skills", "develop", "packages/testing"},
+		{"npx install command", "npx skills add https://github.com/anthropics/skills --skill frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
+		{"npx install command with equals flag", "npx skills add https://github.com/anthropics/skills --skill=frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
+		{"npx install command trailing slash", "npx skills add https://github.com/anthropics/skills/ --skill frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
