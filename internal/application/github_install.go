@@ -18,28 +18,31 @@ import (
 	"agent-studio/internal/domain"
 )
 
-// npxInstallCommandPattern matches the `npx skills add <repo-url> --skill <name>` shorthand,
-// mirroring the CLI convention where a skill lives under <repo>/skills/<name> on the main branch.
+// npxInstallCommandPattern matches the `npx skills add <repo-url> --skill <name>` shorthand.
+// The name after --skill is a registry slug, not necessarily the repository folder name
+// (for example vercel-labs/agent-skills lists "vercel-react-best-practices" for the folder
+// skills/react-best-practices), so it is resolved against the downloaded repository rather
+// than assumed to be an exact path.
 var npxInstallCommandPattern = regexp.MustCompile(`(?i)^npx\s+skills\s+add\s+(\S+)\s+--skill(?:=|\s+)(\S+)$`)
 
-// resolveInstallInput rewrites an `npx skills add` command into the equivalent repository tree URL
-// so it can be parsed by parseRepositoryURL alongside plain URLs.
-func resolveInstallInput(raw string) string {
-	trimmed := strings.TrimSpace(raw)
-	match := npxInstallCommandPattern.FindStringSubmatch(trimmed)
+// splitInstallCommand extracts the repository URL and requested skill slug from an
+// `npx skills add` command. It returns ok=false for a plain URL, which parseRepositoryURL
+// then parses unchanged.
+func splitInstallCommand(raw string) (repositoryURL, skillHint string, ok bool) {
+	match := npxInstallCommandPattern.FindStringSubmatch(strings.TrimSpace(raw))
 	if match == nil {
-		return trimmed
+		return "", "", false
 	}
-	repositoryURL := strings.Trim(strings.TrimSuffix(match[1], "/"), `"'`)
-	skillName := strings.Trim(match[2], `"'`)
-	return fmt.Sprintf("%s/tree/main/skills/%s", repositoryURL, skillName)
+	repositoryURL = strings.Trim(strings.TrimSuffix(strings.TrimSpace(match[1]), "/"), `"'`)
+	skillHint = strings.Trim(match[2], `"'`)
+	return repositoryURL, skillHint, true
 }
 
 // InstallSkillFromURL prefers a shallow Git clone and falls back to a public archive.
 func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (domain.SkillInstallResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	owner, repository, branch, subdirectory, host, err := parseRepositoryURL(rawURL)
+	owner, repository, branch, subdirectory, host, skillHint, err := parseRepositoryURL(rawURL)
 	if err != nil {
 		return domain.SkillInstallResult{}, err
 	}
@@ -71,7 +74,7 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 		return domain.SkillInstallResult{}, err
 	}
 
-	sourceRoot, err := findSkillRoot(temporary, subdirectory)
+	sourceRoot, err := findSkillRoot(temporary, subdirectory, skillHint)
 	if err != nil {
 		return domain.SkillInstallResult{}, err
 	}
@@ -98,18 +101,22 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 	return domain.SkillInstallResult{Workspace: updated, Method: method}, nil
 }
 
-func parseRepositoryURL(rawURL string) (owner, repository, branch, subdirectory, host string, err error) {
-	parsed, parseErr := url.Parse(resolveInstallInput(rawURL))
+func parseRepositoryURL(rawURL string) (owner, repository, branch, subdirectory, host, skillHint string, err error) {
+	input := strings.TrimSpace(rawURL)
+	if repositoryURL, hint, ok := splitInstallCommand(input); ok {
+		input, skillHint = repositoryURL, hint
+	}
+	parsed, parseErr := url.Parse(input)
 	if parseErr != nil || parsed.Scheme != "https" {
-		return "", "", "", "", "", fmt.Errorf("only public HTTPS repository URLs are supported")
+		return "", "", "", "", "", "", fmt.Errorf("only public HTTPS repository URLs are supported")
 	}
 	host = strings.ToLower(parsed.Host)
 	if host != "github.com" && host != "gitlab.com" && host != "bitbucket.org" {
-		return "", "", "", "", "", fmt.Errorf("unsupported public repository host: %s", host)
+		return "", "", "", "", "", "", fmt.Errorf("unsupported public repository host: %s", host)
 	}
 	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", "", "", "", fmt.Errorf("repository URL must include owner and repository")
+		return "", "", "", "", "", "", fmt.Errorf("repository URL must include owner and repository")
 	}
 	owner, repository, branch = parts[0], strings.TrimSuffix(parts[1], ".git"), "main"
 	if len(parts) >= 4 && parts[2] == "tree" {
@@ -119,9 +126,12 @@ func parseRepositoryURL(rawURL string) (owner, repository, branch, subdirectory,
 		}
 	}
 	if len(parts) >= 4 && parts[2] != "tree" {
-		return "", "", "", "", "", fmt.Errorf("unsupported repository URL format")
+		return "", "", "", "", "", "", fmt.Errorf("unsupported repository URL format")
 	}
-	return owner, repository, branch, subdirectory, host, nil
+	if subdirectory != "" {
+		skillHint = ""
+	}
+	return owner, repository, branch, subdirectory, host, skillHint, nil
 }
 
 func cloneRepository(destination, host, owner, repository, branch string) error {
@@ -217,39 +227,68 @@ func extractPublicArchive(data []byte, destination string) error {
 	return nil
 }
 
-func findSkillRoot(root, subdirectory string) (string, error) {
-	searchRoot := root
+// findSkillRoot locates the downloaded skill directory. With an explicit subdirectory (from a
+// /tree/<branch>/<path> URL) it resolves that path directly. With an npx `--skill <hint>` slug and
+// no explicit path, the hint is a registry name that does not always match the repository's folder
+// name (see splitInstallCommand), so it first tries the conventional skills/<hint> layout and falls
+// back to searching the whole repository for a skill whose SKILL.md name or folder matches the hint.
+func findSkillRoot(root, subdirectory, skillHint string) (string, error) {
 	if subdirectory != "" {
-		clean := filepath.Clean(filepath.FromSlash(subdirectory))
-		if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-			return "", fmt.Errorf("repository skill path is unsafe")
+		searchRoot, err := resolveSubdirectory(root, subdirectory)
+		if err != nil {
+			return "", err
 		}
-
-		// Git checks out directly into root, while archive downloads include a
-		// single repository directory (for example, agents-main).
-		candidates := []string{filepath.Join(root, clean)}
-		entries, readErr := os.ReadDir(root)
-		if readErr != nil {
-			return "", fmt.Errorf("inspect downloaded repository: %w", readErr)
-		}
-		for _, entry := range entries {
-			if entry.IsDir() {
-				candidates = append(candidates, filepath.Join(root, entry.Name(), clean))
-			}
-		}
-
-		matches := make([]string, 0, len(candidates))
-		for _, candidate := range candidates {
-			info, statErr := os.Stat(candidate)
-			if statErr == nil && info.IsDir() {
-				matches = append(matches, candidate)
-			}
-		}
-		if len(matches) != 1 {
-			return "", fmt.Errorf("skill directory was not found in repository")
-		}
-		searchRoot = matches[0]
+		return singleSkillIn(searchRoot)
 	}
+	if skillHint != "" {
+		if conventional, err := resolveSubdirectory(root, "skills/"+skillHint); err == nil {
+			if match, matchErr := singleSkillIn(conventional); matchErr == nil {
+				return match, nil
+			}
+		}
+		if match, ok := findSkillBySlug(root, skillHint); ok {
+			return match, nil
+		}
+		return "", fmt.Errorf("could not find a skill named %q in this repository; open the repository and copy the exact skill folder URL instead", skillHint)
+	}
+	return singleSkillIn(root)
+}
+
+// resolveSubdirectory finds subdirectory under root, accounting for the two possible downloaded
+// layouts: git checks out directly into root, while archive downloads nest a single repository
+// directory (for example, agents-main).
+func resolveSubdirectory(root, subdirectory string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(subdirectory))
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("repository skill path is unsafe")
+	}
+
+	candidates := []string{filepath.Join(root, clean)}
+	entries, readErr := os.ReadDir(root)
+	if readErr != nil {
+		return "", fmt.Errorf("inspect downloaded repository: %w", readErr)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			candidates = append(candidates, filepath.Join(root, entry.Name(), clean))
+		}
+	}
+
+	matches := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		info, statErr := os.Stat(candidate)
+		if statErr == nil && info.IsDir() {
+			matches = append(matches, candidate)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("skill directory was not found in repository")
+	}
+	return matches[0], nil
+}
+
+// singleSkillIn walks searchRoot and returns the directory of the one SKILL.md found there.
+func singleSkillIn(searchRoot string) (string, error) {
 	var roots []string
 	err := filepath.WalkDir(searchRoot, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -267,4 +306,75 @@ func findSkillRoot(root, subdirectory string) (string, error) {
 		return "", fmt.Errorf("URL must identify exactly one skill containing SKILL.md")
 	}
 	return roots[0], nil
+}
+
+// findSkillBySlug searches the whole downloaded repository for a skill matching hint, trying
+// progressively looser tiers (exact SKILL.md name, exact folder name, then hint carrying an extra
+// prefix such as an owner or product name, e.g. "vercel-react-best-practices" for a
+// react-best-practices folder). It only returns a match when exactly one candidate satisfies a tier.
+func findSkillBySlug(root, hint string) (string, bool) {
+	type candidate struct {
+		dir, dirName, skillName string
+	}
+	var candidates []candidate
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() && entry.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() || entry.Name() != "SKILL.md" {
+			return nil
+		}
+		dir := filepath.Dir(path)
+		name := ""
+		if skill, err := parseSkill(path); err == nil {
+			name = skill.Name
+		}
+		candidates = append(candidates, candidate{dir: dir, dirName: filepath.Base(dir), skillName: name})
+		return nil
+	})
+
+	normalizedHint := normalizeSkillSlug(hint)
+	tiers := []func(candidate) bool{
+		func(c candidate) bool { return normalizeSkillSlug(c.skillName) == normalizedHint },
+		func(c candidate) bool { return normalizeSkillSlug(c.dirName) == normalizedHint },
+		func(c candidate) bool {
+			normalizedDir, normalizedName := normalizeSkillSlug(c.dirName), normalizeSkillSlug(c.skillName)
+			return (normalizedDir != "" && strings.HasSuffix(normalizedHint, "-"+normalizedDir)) ||
+				(normalizedName != "" && strings.HasSuffix(normalizedHint, "-"+normalizedName))
+		},
+	}
+	for _, matches := range tiers {
+		var found []candidate
+		for _, c := range candidates {
+			if matches(c) {
+				found = append(found, c)
+			}
+		}
+		if len(found) == 1 {
+			return found[0].dir, true
+		}
+	}
+	return "", false
+}
+
+// normalizeSkillSlug lower-cases value and collapses any run of non-alphanumeric characters into a
+// single hyphen, so names like "React Best Practices" and "react-best-practices" compare equal.
+func normalizeSkillSlug(value string) string {
+	var builder strings.Builder
+	lastWasDash := true // suppresses a leading hyphen
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			builder.WriteRune(r)
+			lastWasDash = false
+			continue
+		}
+		if !lastWasDash {
+			builder.WriteByte('-')
+			lastWasDash = true
+		}
+	}
+	return strings.TrimRight(builder.String(), "-")
 }

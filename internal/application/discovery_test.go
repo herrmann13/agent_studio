@@ -348,22 +348,22 @@ func TestLoadProjectsIgnoresInvalidAndDuplicateEntries(t *testing.T) {
 
 func TestParseRepositoryURL(t *testing.T) {
 	tests := []struct {
-		name, input, owner, repository, branch, directory string
+		name, input, owner, repository, branch, directory, skillHint string
 	}{
-		{"repository", "https://github.com/acme/skills", "acme", "skills", "main", ""},
-		{"skill folder", "https://github.com/acme/skills/tree/develop/packages/testing", "acme", "skills", "develop", "packages/testing"},
-		{"npx install command", "npx skills add https://github.com/anthropics/skills --skill frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
-		{"npx install command with equals flag", "npx skills add https://github.com/anthropics/skills --skill=frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
-		{"npx install command trailing slash", "npx skills add https://github.com/anthropics/skills/ --skill frontend-design", "anthropics", "skills", "main", "skills/frontend-design"},
+		{"repository", "https://github.com/acme/skills", "acme", "skills", "main", "", ""},
+		{"skill folder", "https://github.com/acme/skills/tree/develop/packages/testing", "acme", "skills", "develop", "packages/testing", ""},
+		{"npx install command", "npx skills add https://github.com/anthropics/skills --skill frontend-design", "anthropics", "skills", "main", "", "frontend-design"},
+		{"npx install command with equals flag", "npx skills add https://github.com/anthropics/skills --skill=frontend-design", "anthropics", "skills", "main", "", "frontend-design"},
+		{"npx install command trailing slash", "npx skills add https://github.com/anthropics/skills/ --skill frontend-design", "anthropics", "skills", "main", "", "frontend-design"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			owner, repository, branch, directory, host, err := parseRepositoryURL(test.input)
+			owner, repository, branch, directory, host, skillHint, err := parseRepositoryURL(test.input)
 			if err != nil {
 				t.Fatalf("parseRepositoryURL() error = %v", err)
 			}
-			if owner != test.owner || repository != test.repository || branch != test.branch || directory != test.directory || host != "github.com" {
-				t.Errorf("got %q/%q/%q/%q/%q", owner, repository, branch, directory, host)
+			if owner != test.owner || repository != test.repository || branch != test.branch || directory != test.directory || host != "github.com" || skillHint != test.skillHint {
+				t.Errorf("got %q/%q/%q/%q/%q/%q", owner, repository, branch, directory, host, skillHint)
 			}
 		})
 	}
@@ -371,7 +371,7 @@ func TestParseRepositoryURL(t *testing.T) {
 
 func TestParseRepositoryURLRejectsInvalidURLs(t *testing.T) {
 	for _, input := range []string{"http://github.com/acme/skills", "https://unknown.com/acme/skills", "https://github.com/acme"} {
-		if _, _, _, _, _, err := parseRepositoryURL(input); err == nil {
+		if _, _, _, _, _, _, err := parseRepositoryURL(input); err == nil {
 			t.Errorf("parseRepositoryURL(%q) accepted invalid URL", input)
 		}
 	}
@@ -397,7 +397,7 @@ func TestFindSkillRootSupportsGitAndZIPLayouts(t *testing.T) {
 			expected := filepath.Join(base, filepath.FromSlash(skillPath))
 			writeFixture(t, filepath.Join(expected, "SKILL.md"), "# Responsive design\n")
 
-			actual, err := findSkillRoot(root, skillPath)
+			actual, err := findSkillRoot(root, skillPath, "")
 			if err != nil {
 				t.Fatalf("findSkillRoot() error = %v", err)
 			}
@@ -405,6 +405,45 @@ func TestFindSkillRootSupportsGitAndZIPLayouts(t *testing.T) {
 				t.Errorf("findSkillRoot() = %q, want %q", actual, expected)
 			}
 		})
+	}
+}
+
+func TestFindSkillRootResolvesNpxSkillHintByConventionalPath(t *testing.T) {
+	root := t.TempDir()
+	expected := filepath.Join(root, "skills", "frontend-design")
+	writeFixture(t, filepath.Join(expected, "SKILL.md"), "---\nname: frontend-design\n---\n")
+
+	actual, err := findSkillRoot(root, "", "frontend-design")
+	if err != nil {
+		t.Fatalf("findSkillRoot() error = %v", err)
+	}
+	if actual != expected {
+		t.Errorf("findSkillRoot() = %q, want %q", actual, expected)
+	}
+}
+
+func TestFindSkillRootResolvesNpxSkillHintWithMismatchedRegistrySlug(t *testing.T) {
+	// Mirrors vercel-labs/agent-skills: the npx registry name "vercel-react-best-practices"
+	// does not match the repository's own folder name "react-best-practices".
+	root := t.TempDir()
+	expected := filepath.Join(root, "skills", "react-best-practices")
+	writeFixture(t, filepath.Join(expected, "SKILL.md"), "---\nname: react-best-practices\n---\n")
+
+	actual, err := findSkillRoot(root, "", "vercel-react-best-practices")
+	if err != nil {
+		t.Fatalf("findSkillRoot() error = %v", err)
+	}
+	if actual != expected {
+		t.Errorf("findSkillRoot() = %q, want %q", actual, expected)
+	}
+}
+
+func TestFindSkillRootReportsMissingSkillHint(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "skills", "other-skill", "SKILL.md"), "---\nname: other-skill\n---\n")
+
+	if _, err := findSkillRoot(root, "", "does-not-exist"); err == nil {
+		t.Error("findSkillRoot() error = nil, want an error naming the missing skill")
 	}
 }
 
