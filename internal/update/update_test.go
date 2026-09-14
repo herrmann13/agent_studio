@@ -39,18 +39,35 @@ func TestSemanticVersionComparison(t *testing.T) {
 func TestAssetForPlatform(t *testing.T) {
 	release := Release{Assets: []Asset{
 		{Name: "agent-studio-v0.2.0-linux-amd64.deb"},
+		{Name: "agent-studio-v0.2.0-linux-amd64.AppImage"},
 		{Name: "agent-studio-v0.2.0-macos-arm64.dmg"},
 	}}
-	asset, err := assetForPlatform(release, "linux", "amd64")
+	asset, err := assetForPlatform(release, "linux", "amd64", "deb")
 	if err != nil || asset.Name != "agent-studio-v0.2.0-linux-amd64.deb" {
-		t.Fatalf("incorrect Linux asset: %#v, %v", asset, err)
+		t.Fatalf("incorrect Linux DEB asset: %#v, %v", asset, err)
 	}
-	asset, err = assetForPlatform(release, "darwin", "arm64")
+	asset, err = assetForPlatform(release, "linux", "amd64", "appimage")
+	if err != nil || asset.Name != "agent-studio-v0.2.0-linux-amd64.AppImage" {
+		t.Fatalf("incorrect Linux AppImage asset: %#v, %v", asset, err)
+	}
+	asset, err = assetForPlatform(release, "darwin", "arm64", "")
 	if err != nil || asset.Name != "agent-studio-v0.2.0-macos-arm64.dmg" {
 		t.Fatalf("incorrect macOS asset: %#v, %v", asset, err)
 	}
-	if _, err := assetForPlatform(release, "darwin", "amd64"); err == nil {
+	if _, err := assetForPlatform(release, "darwin", "amd64", ""); err == nil {
 		t.Fatal("accepted missing asset")
+	}
+}
+
+func TestLinuxPackageFormat(t *testing.T) {
+	t.Setenv("APPIMAGE", "")
+	t.Setenv("APPDIR", "")
+	if got := linuxPackageFormat(); got != "deb" {
+		t.Fatalf("expected deb format, got %q", got)
+	}
+	t.Setenv("APPIMAGE", "/home/user/Applications/agent-studio.AppImage")
+	if got := linuxPackageFormat(); got != "appimage" {
+		t.Fatalf("expected appimage format, got %q", got)
 	}
 }
 

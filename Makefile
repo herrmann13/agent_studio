@@ -6,7 +6,7 @@ WAILS_TAGS ?= $(if $(filter Linux,$(shell uname -s)),-tags webkit2_41)
 VERSION ?= dev
 
 .DEFAULT_GOAL := help
-.PHONY: help setup dev dev-browser test check build package package-macos package-linux clean
+.PHONY: help setup dev dev-browser test check build package package-macos package-linux package-appimage clean
 
 help: ## List the available local development commands.
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -38,6 +38,9 @@ package-macos: ## Create a DMG for the current macOS architecture.
 
 package-linux: ## Create a DEB for the current Linux architecture.
 	@VERSION="$(VERSION)" WAILS="$(WAILS)" WAILS_TAGS="$(WAILS_TAGS)" bash scripts/package-linux.sh
+
+package-appimage: ## Create an AppImage for the current Linux architecture.
+	@VERSION="$(VERSION)" WAILS="$(WAILS)" WAILS_TAGS="$(WAILS_TAGS)" APPIMAGETOOL="$(APPIMAGETOOL)" bash scripts/package-appimage.sh
 
 clean: ## Remove locally generated build and package artifacts.
 	@rm -rf build/bin dist frontend/dist

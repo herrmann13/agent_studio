@@ -85,7 +85,11 @@ func DownloadAndInstall(ctx context.Context, currentVersion, tagName string) err
 	if release.TagName != tagName {
 		return fmt.Errorf("the available release changed; check for updates again")
 	}
-	asset, err := assetForPlatform(release, runtime.GOOS, runtime.GOARCH)
+	format := ""
+	if runtime.GOOS == "linux" {
+		format = linuxPackageFormat()
+	}
+	asset, err := assetForPlatform(release, runtime.GOOS, runtime.GOARCH, format)
 	if err != nil {
 		return err
 	}
@@ -106,7 +110,8 @@ func DownloadAndInstall(ctx context.Context, currentVersion, tagName string) err
 		return err
 	}
 	// The background macOS installer mounts the DMG after this process exits.
-	keepInstaller = runtime.GOOS == "darwin"
+	// The AppImage installer moves the downloaded image over the running file after exit.
+	keepInstaller = runtime.GOOS == "darwin" || format == "appimage"
 	return nil
 }
 
@@ -219,13 +224,18 @@ func prereleaseNumber(value string) (int, bool) {
 	return number, err == nil
 }
 
-func assetForPlatform(release Release, goos, goarch string) (Asset, error) {
+func assetForPlatform(release Release, goos, goarch, format string) (Asset, error) {
 	var suffix string
 	switch goos {
 	case "darwin":
 		suffix = "-macos-" + goarch + ".dmg"
 	case "linux":
-		suffix = "-linux-" + goarch + ".deb"
+		switch format {
+		case "appimage":
+			suffix = "-linux-" + goarch + ".AppImage"
+		default:
+			suffix = "-linux-" + goarch + ".deb"
+		}
 	default:
 		return Asset{}, fmt.Errorf("updates are not supported on %s", goos)
 	}
@@ -235,6 +245,16 @@ func assetForPlatform(release Release, goos, goarch string) (Asset, error) {
 		}
 	}
 	return Asset{}, fmt.Errorf("the release has no installer for %s/%s", goos, goarch)
+}
+
+// linuxPackageFormat reports how the running Linux binary was installed, so the
+// updater can download the matching installer. AppImage runs set the APPIMAGE
+// environment variable; everything else is treated as a DEB install.
+func linuxPackageFormat() string {
+	if os.Getenv("APPIMAGE") != "" {
+		return "appimage"
+	}
+	return "deb"
 }
 
 func downloadAsset(ctx context.Context, currentVersion string, asset Asset) (string, error) {

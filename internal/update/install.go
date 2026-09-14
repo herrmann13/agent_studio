@@ -23,9 +23,17 @@ func install(path string) error {
 }
 
 func installLinux(path string) error {
-	if filepath.Ext(path) != ".deb" {
-		return fmt.Errorf("the Linux installer must be a .deb file")
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".deb":
+		return installLinuxDeb(path)
+	case ".appimage":
+		return installAppImage(path)
+	default:
+		return fmt.Errorf("the Linux installer must be a .deb or .AppImage file")
 	}
+}
+
+func installLinuxDeb(path string) error {
 	pkexec, err := exec.LookPath("pkexec")
 	if err != nil {
 		return fmt.Errorf("pkexec is required to install the update")
@@ -45,6 +53,33 @@ func installLinux(path string) error {
 	return relaunchAfterExit(os.Getpid(), executable)
 }
 
+// installAppImage replaces the running AppImage with the downloaded one. The
+// original file path is only available through the APPIMAGE environment
+// variable, since os.Executable reports the temporary mount point instead.
+func installAppImage(path string) error {
+	target := os.Getenv("APPIMAGE")
+	if target == "" {
+		return fmt.Errorf("APPIMAGE is not set; run the AppImage directly to update it")
+	}
+	if err := checkWritableDir(filepath.Dir(target)); err != nil {
+		return err
+	}
+	return replaceAndRelaunch(os.Getpid(), path, target)
+}
+
+// checkWritableDir verifies a directory accepts new files so the AppImage
+// self-update can fail synchronously instead of silently in the background.
+func checkWritableDir(dir string) error {
+	probe, err := os.CreateTemp(dir, ".agent-studio-write-test-*")
+	if err != nil {
+		return fmt.Errorf("cannot write the AppImage update to %s: %w", dir, err)
+	}
+	name := probe.Name()
+	probe.Close()
+	_ = os.Remove(name)
+	return nil
+}
+
 func relaunchAfterExit(pid int, binary string) error {
 	script, err := os.CreateTemp("", "agent-studio-relaunch-*.sh")
 	if err != nil {
@@ -54,6 +89,50 @@ func relaunchAfterExit(pid int, binary string) error {
 	if _, err := script.WriteString(`#!/bin/sh
 while kill -0 ` + strconv.Itoa(pid) + ` 2>/dev/null; do sleep 1; done
 nohup ` + shellQuote(binary) + ` >/dev/null 2>&1 &
+`); err != nil {
+		script.Close()
+		os.Remove(scriptPath)
+		return err
+	}
+	if err := script.Close(); err != nil {
+		os.Remove(scriptPath)
+		return err
+	}
+	if err := os.Chmod(scriptPath, 0o700); err != nil {
+		os.Remove(scriptPath)
+		return err
+	}
+	command := exec.Command("/bin/sh", scriptPath)
+	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := command.Start(); err != nil {
+		os.Remove(scriptPath)
+		return err
+	}
+	return nil
+}
+
+// replaceAndRelaunch waits for the current process to exit, replaces targetPath
+// with newPath, and relaunches the target. It is used for AppImage self-updates.
+func replaceAndRelaunch(pid int, newPath, targetPath string) error {
+	script, err := os.CreateTemp("", "agent-studio-appimage-update-*.sh")
+	if err != nil {
+		return err
+	}
+	scriptPath := script.Name()
+	if _, err := script.WriteString(`#!/bin/sh
+while kill -0 ` + strconv.Itoa(pid) + ` 2>/dev/null; do sleep 1; done
+sleep 1
+attempt=0
+while [ "$attempt" -lt 5 ]; do
+  if mv ` + shellQuote(newPath) + ` ` + shellQuote(targetPath) + ` 2>/dev/null; then
+    break
+  fi
+  attempt=$((attempt + 1))
+  sleep 1
+done
+chmod +x ` + shellQuote(targetPath) + `
+nohup ` + shellQuote(targetPath) + ` >/dev/null 2>&1 &
+rm -f "$0"
 `); err != nil {
 		script.Close()
 		os.Remove(scriptPath)

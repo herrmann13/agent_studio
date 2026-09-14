@@ -37,7 +37,10 @@ Download the latest installer from the [Releases](https://github.com/herrmann13/
 | --- | --- |
 | macOS (Apple Silicon) | `agent-studio-<version>-macos-arm64.dmg` |
 | macOS (Intel) | `agent-studio-<version>-macos-amd64.dmg` |
-| Linux (amd64) | `agent-studio-<version>-linux-amd64.deb` |
+| Linux (Debian/Ubuntu) | `agent-studio-<version>-linux-amd64.deb` |
+| Linux (any distribution) | `agent-studio-<version>-linux-amd64.AppImage` |
+
+The AppImage runs on any Linux distribution (Fedora, RHEL, openSUSE, Arch, etc.) and updates itself in place. It still requires `libwebkit2gtk-4.1` and `libgtk-3` on the system, plus FUSE (`libfuse2`) on distributions that do not ship it by default.
 
 ## Getting started
 
