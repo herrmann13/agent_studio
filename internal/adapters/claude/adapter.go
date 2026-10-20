@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 type Adapter struct{}

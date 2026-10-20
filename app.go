@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"agent-studio/internal/application"
-	"agent-studio/internal/domain"
-	"agent-studio/internal/update"
+	"github.com/herrmann13/agent_studio/internal/application"
+	"github.com/herrmann13/agent_studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/update"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 

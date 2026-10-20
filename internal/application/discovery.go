@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"agent-studio/internal/adapters"
-	"agent-studio/internal/adapters/claude"
-	"agent-studio/internal/adapters/codex"
-	"agent-studio/internal/adapters/opencode"
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/adapters"
+	"github.com/herrmann13/agent_studio/internal/adapters/claude"
+	"github.com/herrmann13/agent_studio/internal/adapters/codex"
+	"github.com/herrmann13/agent_studio/internal/adapters/opencode"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 // DiscoveryService inventories and manages local skills. All writes are explicit operations.

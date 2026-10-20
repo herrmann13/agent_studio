@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"agent-studio/internal/adapters"
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/adapters"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 // projectRootFromScopeRoot derives the project directory from a project scope's

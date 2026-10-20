@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"agent-studio/internal/application"
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/application"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 const (

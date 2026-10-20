@@ -1,4 +1,4 @@
-module agent-studio
+module github.com/herrmann13/agent_studio
 
 go 1.25.0
 

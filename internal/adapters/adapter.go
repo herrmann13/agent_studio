@@ -1,6 +1,6 @@
 package adapters
 
-import "agent-studio/internal/domain"
+import "github.com/herrmann13/agent_studio/internal/domain"
 
 // Adapter owns the filesystem conventions of one supported agent.
 type Adapter interface {

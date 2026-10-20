@@ -16,6 +16,16 @@ Everything runs locally. No cloud, no accounts, no telemetry.
 
 `agstudio` is the keyboard-first terminal interface. It uses the same local configuration and safety rules as the desktop app.
 
+Install it directly with Go 1.25 or newer:
+
+```sh
+go install github.com/herrmann13/agent_studio/cmd/agstudio@latest
+```
+
+Ensure `$(go env GOPATH)/bin` is in your `PATH`, then run `agstudio`. Re-run the install command to update it.
+
+To build from a local checkout:
+
 ```sh
 make build-tui
 ./build/bin/agstudio

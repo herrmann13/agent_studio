@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 const (
