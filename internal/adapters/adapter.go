@@ -1,6 +1,6 @@
 package adapters
 
-import "agent-studio/internal/domain"
+import "github.com/herrmann13/agent_studio/internal/domain"
 
 // Installation is one locally installed agent, together with the skill
 // directory Agent Studio shows as that agent's scope.

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"agent-studio/internal/adapters"
+	"github.com/herrmann13/agent_studio/internal/adapters"
 )
 
 // fakeEnvironment reports the given executables as installed, mapped to the

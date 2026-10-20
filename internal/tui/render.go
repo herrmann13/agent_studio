@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/domain"
 	"golang.org/x/sys/unix"
 )
 

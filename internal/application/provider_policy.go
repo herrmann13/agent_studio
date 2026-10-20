@@ -1,7 +1,7 @@
 package application
 
 import (
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 func (s *DiscoveryService) syncSkillPolicy(skill domain.Skill, scope domain.Scope, provider domain.Provider, mode string, policy *skillPolicy) error {

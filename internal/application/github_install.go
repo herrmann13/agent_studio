@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"agent-studio/internal/domain"
+	"github.com/herrmann13/agent_studio/internal/domain"
 )
 
 // npxInstallCommandPattern matches the `npx skills add <repo-url> --skill <name>` shorthand.
