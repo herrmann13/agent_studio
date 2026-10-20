@@ -25,3 +25,14 @@
 .registry-error, .modal-skill-row .registry-error, .empty-state.registry-error { display: block; color: var(--cut); }
 /* Two lines per local skill keep the skills.sh results reachable without long scrolling. */
 .modal-skill-row .modal-skill-description { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.lane-grip { display: grid; width: 1.1rem; height: 1.8rem; flex: 0 0 auto; place-items: center; border: 0; padding: 0; background: transparent; color: var(--text-faint); font-size: .9rem; cursor: grab; touch-action: none; user-select: none; }
+.lane-grip:hover, .lane-grip:focus-visible { color: var(--signal); }
+.lane-grip:active { cursor: grabbing; }
+.scope-lane.is-reorder-source { opacity: .55; }
+.scope-lane.is-reorder-target { border-color: var(--signal); box-shadow: inset 3px 0 0 var(--signal); }
+.agent-choice-list { display: grid; gap: .35rem; padding: 0 1.25rem; }
+.agent-choice { display: flex; align-items: flex-start; gap: .65rem; border: 1px solid var(--line); border-radius: 2px; padding: .65rem .75rem; cursor: pointer; }
+.agent-choice:hover { border-color: var(--line-strong); }
+.agent-choice input { margin-top: .2rem; accent-color: var(--signal); }
+.agent-choice span { display: grid; min-width: 0; gap: .2rem; }
+.agent-choice small { overflow: hidden; color: var(--text-faint); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }

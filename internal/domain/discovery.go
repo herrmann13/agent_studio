@@ -18,6 +18,8 @@ type Agent struct {
 	ConfigPath  string   `json:"configPath"`
 	CommandPath string   `json:"commandPath,omitempty"`
 	Version     string   `json:"version,omitempty"`
+	// Tracked is false when the user hid the agent; it then has no scope.
+	Tracked bool `json:"tracked"`
 }
 
 // SkillLayoutOpenCodeV2 marks a scope whose skills follow OpenCode v2 discovery:
@@ -52,6 +54,9 @@ type Scope struct {
 	Provider    Provider `json:"provider,omitempty"`
 	Root        string   `json:"root"`
 	SkillLayout string   `json:"skillLayout,omitempty"`
+	// Hidden marks the scope of an agent the user stopped tracking. It is still
+	// scanned; interfaces leave it out of their lanes and destination lists.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Project is a user-selected directory whose project skill location is tracked.
@@ -69,6 +74,9 @@ type DiscoveryResult struct {
 	Scopes      []Scope      `json:"scopes"`
 	Projects    []Project    `json:"projects"`
 	ScannedAt   string       `json:"scannedAt"`
+	// Warnings are problems that did not stop discovery, such as an invalid
+	// preferences file.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // RegistrySkill is a search result from the public skills.sh directory.

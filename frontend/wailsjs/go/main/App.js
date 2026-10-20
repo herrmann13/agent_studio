@@ -42,6 +42,10 @@ export function RemoveProject(arg1) {
   return window['go']['main']['App']['RemoveProject'](arg1);
 }
 
+export function ReorderProjects(arg1) {
+  return window['go']['main']['App']['ReorderProjects'](arg1);
+}
+
 export function SearchRegistrySkills(arg1) {
   return window['go']['main']['App']['SearchRegistrySkills'](arg1);
 }
@@ -50,8 +54,16 @@ export function SelectProjectFolder() {
   return window['go']['main']['App']['SelectProjectFolder']();
 }
 
+export function SetAgentOrder(arg1) {
+  return window['go']['main']['App']['SetAgentOrder'](arg1);
+}
+
 export function SetSkillInvocationMode(arg1, arg2) {
   return window['go']['main']['App']['SetSkillInvocationMode'](arg1, arg2);
+}
+
+export function SetTrackedAgents(arg1) {
+  return window['go']['main']['App']['SetTrackedAgents'](arg1);
 }
 
 export function SyncGlobalSkills() {

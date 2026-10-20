@@ -1,5 +1,5 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useRef, useState} from 'react';
-import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallRegistrySkill, InstallSkillFromURL, RemoveProject, SearchRegistrySkills, SelectProjectFolder, SetSkillInvocationMode, SyncGlobalSkills} from '../wailsjs/go/main/App';
+import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallRegistrySkill, InstallSkillFromURL, RemoveProject, ReorderProjects, SearchRegistrySkills, SelectProjectFolder, SetAgentOrder, SetSkillInvocationMode, SetTrackedAgents, SyncGlobalSkills} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
 import {BrowserOpenURL} from '../wailsjs/runtime/runtime';
 import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
@@ -8,6 +8,21 @@ import openCodeIcon from './assets/agents/opencode-logo-light.svg';
 import './App.css';
 
 const usePointerDrag = typeof navigator !== 'undefined' && /Linux/i.test(navigator.platform || navigator.userAgent);
+
+type LaneGroup = 'agents' | 'projects';
+
+// LaneReorder lets a lane be dragged by its grip onto another lane of the same
+// group. It uses pointer events on every platform, so it never competes with the
+// HTML5 drag that copies skills between lanes.
+type LaneReorder = {
+    group: LaneGroup;
+    draggingID?: string;
+    overID?: string;
+    onStart: () => void;
+    onOver: (scopeID: string | undefined) => void;
+    onDrop: (targetID: string | undefined) => void;
+    onStep: (offset: number) => void;
+};
 
 function App() {
     const [workspace, setWorkspace] = useState<domain.DiscoveryResult>();
@@ -28,12 +43,20 @@ function App() {
     const [isCheckingForUpdates, setIsCheckingForUpdates] = useState(false);
     const [isUpdating, setIsUpdating] = useState(false);
     const [pointerDropScopeID, setPointerDropScopeID] = useState<string>();
+    const [laneDrag, setLaneDrag] = useState<{group: LaneGroup; id: string; overID?: string}>();
+    const [isAgentsDialogOpen, setIsAgentsDialogOpen] = useState(false);
+    // Lane order saves run one at a time, and only the newest reply is applied,
+    // so quick reorders can neither persist an older order last nor make a lane
+    // jump back when an older reply arrives.
+    const laneSaveQueue = useRef<Promise<void>>(Promise.resolve());
+    const laneSaveSequence = useRef(0);
 
     async function refresh() {
         setIsLoading(true);
         try {
-            setWorkspace(normalizeWorkspace(await DiscoverLocalEnvironment()));
-            setMessage(undefined);
+            const result = normalizeWorkspace(await DiscoverLocalEnvironment());
+            setWorkspace(result);
+            setMessage(result.warnings?.length ? result.warnings.join(' ') : undefined);
         } catch (error) {
             setMessage(error instanceof Error ? error.message : 'Could not inspect the local workspace.');
         } finally {
@@ -84,6 +107,62 @@ function App() {
     function requestSkillDeletion(skill: domain.Skill) {
         setContextMenu(undefined);
         setPendingDeletion(skill);
+    }
+
+    function saveLaneOrder(group: LaneGroup, scopeIDs: string[]) {
+        // Reorder locally first so the lane lands immediately, then persist.
+        setWorkspace((current) => current && reorderScopes(current, scopeIDs));
+        const sequence = ++laneSaveSequence.current;
+        laneSaveQueue.current = laneSaveQueue.current.then(async () => {
+            try {
+                const result = group === 'agents' ? await SetAgentOrder(scopeIDs) : await ReorderProjects(scopeIDs.map((id) => id.replace(/^project:/, '')));
+                if (sequence === laneSaveSequence.current) setWorkspace(normalizeWorkspace(result));
+            } catch (error) {
+                await refresh();
+                setMessage(error instanceof Error ? error.message : String(error));
+            }
+        });
+    }
+
+    function moveLane(group: LaneGroup, scopeID: string, targetIndex: number) {
+        const ids = (group === 'agents' ? agentLaneScopes : projectScopes).map((scope) => scope.id);
+        const from = ids.indexOf(scopeID);
+        if (from < 0 || targetIndex < 0 || targetIndex >= ids.length || targetIndex === from) return;
+        ids.splice(from, 1);
+        ids.splice(targetIndex, 0, scopeID);
+        void saveLaneOrder(group, ids);
+    }
+
+    function laneReorder(group: LaneGroup, scope: domain.Scope, index: number): LaneReorder {
+        return {
+            group,
+            draggingID: laneDrag?.group === group ? laneDrag.id : undefined,
+            overID: laneDrag?.group === group ? laneDrag.overID : undefined,
+            onStart: () => setLaneDrag({group, id: scope.id}),
+            onOver: (overID) => setLaneDrag((current) => current && {...current, overID}),
+            onDrop: (targetID) => {
+                setLaneDrag(undefined);
+                const lanes = group === 'agents' ? agentLaneScopes : projectScopes;
+                const targetIndex = lanes.findIndex((lane) => lane.id === targetID);
+                if (targetID && targetID !== scope.id && targetIndex >= 0) moveLane(group, scope.id, targetIndex);
+            },
+            onStep: (offset) => moveLane(group, scope.id, index + offset),
+        };
+    }
+
+    async function setTrackedAgents(agentIDs: string[], successMessage: string) {
+        try {
+            setWorkspace(normalizeWorkspace(await SetTrackedAgents(agentIDs)));
+            setMessage(successMessage);
+            setIsAgentsDialogOpen(false);
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : String(error));
+        }
+    }
+
+    function stopTrackingAgent(scope: domain.Scope) {
+        const tracked = (workspace?.agents ?? []).filter((agent) => agent.tracked && agent.id !== scope.id).map((agent) => agent.id);
+        void setTrackedAgents(tracked, `${scope.name} is no longer tracked. Use Agents to show it again.`);
     }
 
     async function syncGlobalSkills() {
@@ -202,9 +281,13 @@ function App() {
         }
     }
 
-    const scopes = workspace?.scopes ?? [];
+    // Agents the user stopped tracking are still reported (their skills count for
+    // conflicts and shared-file warnings) but get no lane and are no destination.
+    const scopes = (workspace?.scopes ?? []).filter((scope) => !scope.hidden);
+    const visibleScopeIDs = new Set(scopes.map((scope) => scope.id));
     // The Global lane leads the Agents section: a skill dropped there reaches every installed agent.
-    const agentScopes = scopes.filter((scope) => scope.kind === 'global' || scope.kind === 'agent');
+    const globalScopes = scopes.filter((scope) => scope.kind === 'global');
+    const agentLaneScopes = scopes.filter((scope) => scope.kind === 'agent');
     const projectScopes = scopes.filter((scope) => scope.kind === 'project');
 
     useEffect(() => {
@@ -218,7 +301,7 @@ function App() {
                 <div>
                     <h2>Agent Studio</h2>
                 </div>
-                <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" type="button" onClick={() => void checkForUpdates()} disabled={isCheckingForUpdates}>{isCheckingForUpdates ? 'Checking...' : 'Check updates'}</button><button className="refresh-button" type="button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
+                <div className="header-actions"><button className="install-button" type="button" onClick={() => setIsInstallDialogOpen(true)}>Install skill</button><button className="refresh-button" type="button" onClick={() => setIsAgentsDialogOpen(true)} disabled={!workspace}>Agents</button><button className="refresh-button" type="button" onClick={() => void checkForUpdates()} disabled={isCheckingForUpdates}>{isCheckingForUpdates ? 'Checking...' : 'Check updates'}</button><button className="refresh-button" type="button" onClick={() => void refresh()} disabled={isLoading}>{isLoading ? 'Scanning...' : 'Refresh'}</button></div>
             </header>
 
             <section className="project-form">
@@ -232,17 +315,19 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading title="Agents"/>
                 <div className="scope-grid">
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onSyncGlobal={scope.kind === 'global' ? () => void syncGlobalSkills() : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>) }
+                    {globalScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onSyncGlobal={() => void syncGlobalSkills()} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>)}
+                    {agentLaneScopes.map((scope, index) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }} onStopTracking={() => stopTrackingAgent(scope)} reorder={laneReorder('agents', scope, index)}/>)}
+                    {!agentLaneScopes.length && workspace ? <p className="empty-projects">No agents are tracked. Use <strong>Agents</strong> to choose which installed agents to show.</p> : null}
                 </div>
             </section>
 
             <section className="workspace-section">
                 <SectionHeading title="Selected projects"/>
                 {projectScopes.length ? <div className="scope-grid project-grid">
-                    {projectScopes.map((scope) => {
+                    {projectScopes.map((scope, index) => {
                         const projectID = scope.id.split(':')[1];
                         const project = workspace?.projects.find((item) => item.id === projectID);
-                        return <ScopeLane key={scope.id} scope={scope} project={project} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
+                        return <ScopeLane key={scope.id} scope={scope} project={project} reorder={laneReorder('projects', scope, index)} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onRemoveProject={project ? () => void removeProject(project) : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>;
                     })}
                 </div> : <p className="empty-projects">Add a project path to create its `.agents/skills` destination.</p>}
             </section>
@@ -254,13 +339,14 @@ function App() {
 
             {addSkillTarget ? <AddSkillModal
                 target={addSkillTarget}
-                skills={workspace?.skills ?? []}
+                skills={(workspace?.skills ?? []).filter((skill) => visibleScopeIDs.has(skill.scopeId))}
                 search={skillSearch}
                 onSearch={setSkillSearch}
                 onAdd={(skill) => void addSkillToProject(skill, addSkillTarget)}
                 onInstallRegistry={(skill) => installRegistrySkill(skill, addSkillTarget)}
                 onClose={() => setAddSkillTarget(undefined)}
             /> : null}
+            {isAgentsDialogOpen && workspace ? <AgentsDialog agents={workspace.agents} onSave={(ids) => void setTrackedAgents(ids, 'Tracked agents updated.')} onClose={() => setIsAgentsDialogOpen(false)}/> : null}
             {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
             {availableUpdate ? <UpdateDialog update={availableUpdate} isUpdating={isUpdating} onInstall={() => void installUpdate()} onClose={() => { if (!isUpdating) setAvailableUpdate(undefined); }}/> : null}
             {pendingDeletion ? <DeleteSkillDialog skill={pendingDeletion} sharedWith={scopesSharingSkill(workspace, pendingDeletion)} isDeleting={isDeleting} onDelete={() => void deleteSkill()} onClose={() => { if (!isDeleting) setPendingDeletion(undefined); }}/> : null}
@@ -268,7 +354,7 @@ function App() {
     );
 }
 
-function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, onDragStart, onDrop, onPointerTarget, onPointerDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill, onSyncGlobal}: {
+function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, onDragStart, onDrop, onPointerTarget, onPointerDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill, onSyncGlobal, onStopTracking, reorder}: {
     scope: domain.Scope;
     project?: domain.Project;
     skills: domain.Skill[];
@@ -283,13 +369,65 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
     onRemoveProject?: () => void;
     onAddSkill?: () => void;
     onSyncGlobal?: () => void;
+    onStopTracking?: () => void;
+    reorder?: LaneReorder;
 }) {
     const [isDropTarget, setIsDropTarget] = useState(false);
     const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
     const [projectMenuOpen, setProjectMenuOpen] = useState(false);
     const pointerDrag = useRef<{pointerID: number; skill: domain.Skill; startX: number; startY: number; active: boolean} | undefined>(undefined);
     const [pointerPreview, setPointerPreview] = useState<{name: string; x: number; y: number}>();
+    const laneDrag = useRef<{pointerID: number; startX: number; startY: number; active: boolean} | undefined>(undefined);
+    const gripRef = useRef<HTMLButtonElement>(null);
     const iconSource = scopeIcon(scope);
+
+    function laneTarget(event: React.PointerEvent) {
+        const lane = document.elementFromPoint(event.clientX, event.clientY)?.closest(`[data-reorder-group="${reorder?.group}"]`) as HTMLElement | null;
+        return lane?.dataset.scopeId;
+    }
+
+    function startLaneDrag(event: React.PointerEvent<HTMLElement>) {
+        if (!reorder || event.button !== 0) return;
+        laneDrag.current = {pointerID: event.pointerId, startX: event.clientX, startY: event.clientY, active: false};
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }
+
+    function moveLaneDrag(event: React.PointerEvent<HTMLElement>) {
+        const drag = laneDrag.current;
+        if (!reorder || !drag || drag.pointerID !== event.pointerId) return;
+        if (!drag.active && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4) return;
+        if (!drag.active) {
+            drag.active = true;
+            reorder.onStart();
+        }
+        event.preventDefault();
+        reorder.onOver(laneTarget(event));
+    }
+
+    function finishLaneDrag(event: React.PointerEvent<HTMLElement>) {
+        const drag = laneDrag.current;
+        if (!reorder || !drag || drag.pointerID !== event.pointerId) return;
+        laneDrag.current = undefined;
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+        if (drag.active) reorder.onDrop(laneTarget(event));
+    }
+
+    // Also bound to lostpointercapture: if the window loses focus mid-drag, the
+    // lane must not stay stuck in its dragging state.
+    function cancelLaneDrag(event: React.PointerEvent<HTMLElement>) {
+        if (!reorder || !laneDrag.current || laneDrag.current.pointerID !== event.pointerId) return;
+        laneDrag.current = undefined;
+        reorder.onDrop(undefined);
+    }
+
+    function stepLane(event: React.KeyboardEvent<HTMLButtonElement>, offset: number) {
+        if (!reorder) return;
+        event.preventDefault();
+        reorder.onStep(offset);
+        // Moving the lane moves its DOM node; WebKit may drop focus, so restore it
+        // and repeated arrow presses keep moving the same lane.
+        requestAnimationFrame(() => gripRef.current?.focus());
+    }
 
     function pointerTarget(event: React.PointerEvent) {
         return (document.elementFromPoint(event.clientX, event.clientY)?.closest('[data-scope-id]') as HTMLElement | null)?.dataset.scopeId;
@@ -341,20 +479,26 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
         });
     }
 
+    const isReorderSource = reorder?.draggingID === scope.id;
+    const isReorderTarget = Boolean(reorder?.draggingID) && reorder?.overID === scope.id && !isReorderSource;
     return <section
         data-scope-id={scope.id}
-        className={`scope-lane ${isDropTarget || pointerDropScopeID === scope.id ? 'is-drop-target' : ''}`}
+        data-reorder-group={reorder?.group}
+        className={`scope-lane ${isDropTarget || pointerDropScopeID === scope.id ? 'is-drop-target' : ''} ${isReorderSource ? 'is-reorder-source' : ''} ${isReorderTarget ? 'is-reorder-target' : ''}`}
         onDragOver={(event) => { event.preventDefault(); setIsDropTarget(Boolean(draggedSkill && draggedSkill.scopeId !== scope.id)); }}
         onDragLeave={() => setIsDropTarget(false)}
         onDrop={(event) => { event.preventDefault(); setIsDropTarget(false); onDrop(scope); }}
     >
         <div className="scope-heading">
-            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? 'G' : 'P'}</span><strong>{scope.name}</strong></div>
+            <div>{reorder ? <button ref={gripRef} className="lane-grip" type="button" aria-label={`Move ${scope.name}`} title="Drag to reorder, or focus and use the arrow keys" onPointerDown={startLaneDrag} onPointerMove={moveLaneDrag} onPointerUp={finishLaneDrag} onPointerCancel={cancelLaneDrag} onLostPointerCapture={cancelLaneDrag} onKeyDown={(event) => {
+                if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') stepLane(event, -1);
+                if (event.key === 'ArrowRight' || event.key === 'ArrowDown') stepLane(event, 1);
+            }}>⠿</button> : null}<span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? 'G' : 'P'}</span><strong>{scope.name}</strong></div>
             <div className="scope-actions">
                 <span>{skills.length}</span>
-                {onAddSkill || onRemoveProject ? <div className="project-menu-wrap">
+                {onAddSkill || onRemoveProject || onStopTracking ? <div className="project-menu-wrap">
                     <button className="project-menu-button" type="button" aria-label={`Menu for ${scope.name}`} aria-expanded={projectMenuOpen} onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((open) => !open); }}>⋮</button>
-                    {projectMenuOpen ? <div className="project-menu" role="menu" onClick={(event) => event.stopPropagation()}>{onAddSkill ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onAddSkill(); }}>Add skill</button> : null}{scope.kind === 'project' && onRemoveProject ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onRemoveProject(); }}>Stop tracking</button> : null}</div> : null}
+                    {projectMenuOpen ? <div className="project-menu" role="menu" onClick={(event) => event.stopPropagation()}>{onAddSkill ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onAddSkill(); }}>Add skill</button> : null}{scope.kind === 'project' && onRemoveProject ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onRemoveProject(); }}>Stop tracking</button> : null}{onStopTracking ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onStopTracking(); }}>Stop tracking</button> : null}</div> : null}
                 </div> : null}
             </div>
         </div>
@@ -558,7 +702,7 @@ function DeleteSkillDialog({skill, sharedWith, isDeleting, onDelete, onClose}: {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-heading"><h2 id="delete-skill-title">Delete {skill.name}?</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
-            {skill.scopeId === 'global' ? <p>This is a Global skill, so it is removed from every agent, including the copy Agent Studio made for Claude Code. Skills an agent has on its own are not affected.</p> : sharedWith.length ? <p>This file is shared by {sharedWith.map((scope) => scope.name).join(' and ')}, so it is removed from all of them. Copies elsewhere are not affected.</p> : <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>}
+            {skill.scopeId === 'global' ? <p>This is a Global skill, so it is removed from every agent, including the copy Agent Studio made for Claude Code. Skills an agent has on its own are not affected.</p> : sharedWith.length ? <p>This file is shared by {sharedWith.map((scope) => scope.hidden ? `${scope.name} (hidden)` : scope.name).join(' and ')}, so it is removed from all of them. Copies elsewhere are not affected.</p> : <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>}
             <code title={skill.path}>{skill.path}</code>
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button><button type="button" className="delete-confirm" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete skill'}</button></div>
         </section>
@@ -570,6 +714,47 @@ function scopesSharingSkill(workspace: domain.DiscoveryResult | undefined, skill
     const scopeIDs = new Set(workspace?.skills.filter((item) => item.path === skill.path).map((item) => item.scopeId));
     if (scopeIDs.size < 2) return [];
     return workspace?.scopes.filter((scope) => scopeIDs.has(scope.id)) ?? [];
+}
+
+// reorderScopes applies a new order to one group of lanes, leaving the others in place.
+function reorderScopes(workspace: domain.DiscoveryResult, orderedIDs: string[]): domain.DiscoveryResult {
+    const moved = new Set(orderedIDs);
+    const ordered = orderedIDs.map((id) => workspace.scopes.find((scope) => scope.id === id)).filter((scope): scope is domain.Scope => Boolean(scope));
+    let next = 0;
+    const scopes = workspace.scopes.map((scope) => moved.has(scope.id) ? ordered[next++] : scope);
+    return {...workspace, scopes} as domain.DiscoveryResult;
+}
+
+function AgentsDialog({agents, onSave, onClose}: {
+    agents: domain.Agent[];
+    onSave: (agentIDs: string[]) => void;
+    onClose: () => void;
+}) {
+    const [selected, setSelected] = useState(() => new Set(agents.filter((agent) => agent.tracked).map((agent) => agent.id)));
+
+    function toggle(agentID: string) {
+        setSelected((current) => {
+            const next = new Set(current);
+            if (next.has(agentID)) next.delete(agentID);
+            else next.add(agentID);
+            return next;
+        });
+    }
+
+    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+        <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="agents-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><h2 id="agents-title">Agents</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose}>×</button></div>
+            <p className="install-help">Choose which installed agents Agent Studio shows. Hiding an agent never changes its files or configuration, and Global skills still reach it.</p>
+            <div className="agent-choice-list">
+                {agents.map((agent) => <label className="agent-choice" key={agent.id}>
+                    <input type="checkbox" checked={selected.has(agent.id)} onChange={() => toggle(agent.id)}/>
+                    <span><strong>{agent.name}{agent.version ? ` · ${agent.version}` : ''}</strong><small title={agent.commandPath}>{agent.commandPath}</small></span>
+                </label>)}
+                {!agents.length ? <p className="empty-state">No supported agent is installed.</p> : null}
+            </div>
+            <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose}>Cancel</button><button type="button" className="install-submit" onClick={() => onSave(agents.filter((agent) => selected.has(agent.id)).map((agent) => agent.id))}>Save</button></div>
+        </section>
+    </div>;
 }
 
 function skillsInScope(workspace: domain.DiscoveryResult | undefined, scopeID: string) {

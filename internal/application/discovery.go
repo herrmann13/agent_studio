@@ -64,7 +64,21 @@ func (s *DiscoveryService) Discover() (domain.DiscoveryResult, error) {
 // already holds s.mu for its whole operation, so they call discover() directly
 // instead of Discover() to avoid deadlocking on a non-reentrant mutex.
 func (s *DiscoveryService) discover() (domain.DiscoveryResult, error) {
+	// A broken preferences file must not hide the workspace: fall back to the
+	// default layout and report it; saving a new layout refuses until it is fixed.
+	layout, err := s.loadPreferences()
+	var warnings []string
+	if err != nil {
+		layout, warnings = preferences{}, []string{err.Error()}
+	}
+	return s.discoverWith(s.detectInstallations(layout.AgentOrder), layout, warnings)
+}
+
+// discoverWith builds the inventory from already detected installations, so an
+// operation that detected agents itself does not run their executables again.
+func (s *DiscoveryService) discoverWith(installations []adapters.Installation, layout preferences, warnings []string) (domain.DiscoveryResult, error) {
 	result := domain.DiscoveryResult{
+		Warnings:    warnings,
 		Agents:      []domain.Agent{},
 		Skills:      []domain.Skill{},
 		ConfigFiles: []domain.ConfigFile{},
@@ -80,15 +94,18 @@ func (s *DiscoveryService) discover() (domain.DiscoveryResult, error) {
 	})
 
 	// Only installed agents are listed; an agent whose executable is missing
-	// contributes no scope even if its config directory is still on disk.
-	for _, adapter := range s.adapters {
-		for _, installation := range adapter.Detect(s.env) {
-			result.Agents = append(result.Agents, installation.Agent)
-			if installation.Config != nil {
-				result.ConfigFiles = append(result.ConfigFiles, *installation.Config)
-			}
-			result.Scopes = append(result.Scopes, installation.Scope)
+	// contributes no scope even if its config directory is still on disk. An
+	// agent the user stopped tracking keeps its scope, marked Hidden, so its
+	// skills still count for duplicate/conflict detection and shared-file
+	// warnings; interfaces just do not draw it.
+	for _, installation := range installations {
+		installation.Agent.Tracked = !slices.Contains(layout.HiddenAgents, installation.Agent.ID)
+		installation.Scope.Hidden = !installation.Agent.Tracked
+		result.Agents = append(result.Agents, installation.Agent)
+		if installation.Config != nil {
+			result.ConfigFiles = append(result.ConfigFiles, *installation.Config)
 		}
+		result.Scopes = append(result.Scopes, installation.Scope)
 	}
 
 	for _, project := range result.Projects {

@@ -99,6 +99,21 @@ func (a *App) InstallRegistrySkill(source, skillID, targetScopeID string) (domai
 	return a.discovery.InstallRegistrySkill(source, skillID, targetScopeID)
 }
 
+// SetAgentOrder persists the order of agent lanes.
+func (a *App) SetAgentOrder(agentIDs []string) (domain.DiscoveryResult, error) {
+	return a.discovery.SetAgentOrder(agentIDs)
+}
+
+// SetTrackedAgents chooses which installed agents are listed.
+func (a *App) SetTrackedAgents(agentIDs []string) (domain.DiscoveryResult, error) {
+	return a.discovery.SetTrackedAgents(agentIDs)
+}
+
+// ReorderProjects persists the order of tracked projects.
+func (a *App) ReorderProjects(projectIDs []string) (domain.DiscoveryResult, error) {
+	return a.discovery.ReorderProjects(projectIDs)
+}
+
 // SyncGlobalSkills copies Global skills to installed agents that cannot read them natively.
 func (a *App) SyncGlobalSkills() (domain.DiscoveryResult, error) {
 	return a.discovery.SyncGlobalSkills()

@@ -41,7 +41,7 @@ func scopeIDs(service *DiscoveryService, t *testing.T) []string {
 	}
 	var ids []string
 	for _, scope := range result.Scopes {
-		if scope.Kind == "agent" {
+		if scope.Kind == "agent" && !scope.Hidden {
 			ids = append(ids, scope.ID)
 		}
 	}

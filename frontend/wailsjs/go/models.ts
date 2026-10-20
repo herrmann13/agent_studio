@@ -8,6 +8,7 @@ export namespace domain {
 	    configPath: string;
 	    commandPath?: string;
 	    version?: string;
+	    tracked: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Agent(source);
@@ -22,6 +23,7 @@ export namespace domain {
 	        this.configPath = source["configPath"];
 	        this.commandPath = source["commandPath"];
 	        this.version = source["version"];
+	        this.tracked = source["tracked"];
 	    }
 	}
 	export class ConfigFile {
@@ -63,6 +65,7 @@ export namespace domain {
 	    provider?: string;
 	    root: string;
 	    skillLayout?: string;
+	    hidden?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Scope(source);
@@ -76,6 +79,7 @@ export namespace domain {
 	        this.provider = source["provider"];
 	        this.root = source["root"];
 	        this.skillLayout = source["skillLayout"];
+	        this.hidden = source["hidden"];
 	    }
 	}
 	export class Skill {
@@ -111,6 +115,7 @@ export namespace domain {
 	    scopes: Scope[];
 	    projects: Project[];
 	    scannedAt: string;
+	    warnings?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new DiscoveryResult(source);
@@ -124,6 +129,7 @@ export namespace domain {
 	        this.scopes = this.convertValues(source["scopes"], Scope);
 	        this.projects = this.convertValues(source["projects"], Project);
 	        this.scannedAt = source["scannedAt"];
+	        this.warnings = source["warnings"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

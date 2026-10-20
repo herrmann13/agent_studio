@@ -38,6 +38,8 @@ const (
 	dialogRegistrySearch  dialog = "registry-search"
 	dialogRegistryResults dialog = "registry-results"
 	dialogRegistryTarget  dialog = "registry-target"
+	// dialogAgents chooses which installed agents are tracked (space toggles).
+	dialogAgents dialog = "agents"
 )
 
 type terminal struct {
@@ -87,6 +89,8 @@ type model struct {
 	// results. The finished work is applied on the main loop through done.
 	busy string
 	done chan func(*model)
+	// agentSelection holds the tracked checkboxes while dialogAgents is open.
+	agentSelection map[string]bool
 }
 
 type keyEvent struct {
@@ -111,6 +115,7 @@ func Run() error {
 	fmt.Print(escapeSequence + "[?1049h" + escapeSequence + "[?25l")
 
 	app := model{service: service, workspace: workspace, focusScopes: true, done: make(chan func(*model))}
+	app.showWarnings()
 	keys := make(chan keyEvent)
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
@@ -213,7 +218,7 @@ func (m *model) handleKey(key string) bool {
 			m.dialog, m.dialogIndex = dialogMode, invocationModeIndex(skill.InvocationMode)
 		}
 	case "c":
-		if m.selectedSkill() != nil && len(m.workspace.Scopes) > 1 {
+		if m.selectedSkill() != nil && len(m.scopes()) > 1 {
 			m.dialog, m.dialogIndex = dialogCopy, 0
 		}
 	case "d":
@@ -236,6 +241,12 @@ func (m *model) handleKey(key string) bool {
 		if m.selectedScope() != nil {
 			m.dialog, m.input = dialogRegistrySearch, ""
 		}
+	case "a":
+		m.agentSelection = map[string]bool{}
+		for _, agent := range m.workspace.Agents {
+			m.agentSelection[agent.ID] = agent.Tracked
+		}
+		m.dialog, m.dialogIndex = dialogAgents, 0
 	}
 	return false
 }
@@ -267,6 +278,13 @@ func (m *model) handleDialogKey(key string) {
 	}
 	if key == "down" || key == "j" {
 		m.moveDialogSelection(1)
+		return
+	}
+	if m.dialog == dialogAgents && key == " " {
+		if m.dialogIndex < len(m.workspace.Agents) {
+			id := m.workspace.Agents[m.dialogIndex].ID
+			m.agentSelection[id] = !m.agentSelection[id]
+		}
 		return
 	}
 	if key == "n" && m.dialog == dialogDelete {
@@ -340,10 +358,10 @@ func (m *model) submitDialog() {
 		workspace, err := m.service.SetSkillInvocationMode(skill.Path, invocationModes()[m.dialogIndex])
 		m.applyWorkspace(workspace, err, "Skill mode updated.")
 	case dialogCopy:
-		if skill == nil || len(m.workspace.Scopes) == 0 {
+		if skill == nil || len(m.scopes()) == 0 {
 			return
 		}
-		target := m.workspace.Scopes[m.dialogIndex]
+		target := m.scopes()[m.dialogIndex]
 		workspace, err := m.service.CopySkill(skill.Path, target.ID)
 		m.applyWorkspace(workspace, err, "Skill copied.")
 	case dialogDelete:
@@ -353,10 +371,10 @@ func (m *model) submitDialog() {
 		workspace, err := m.service.DeleteSkill(skill.Path)
 		m.applyWorkspace(workspace, err, "Skill deleted.")
 	case dialogInstallTo:
-		if len(m.workspace.Scopes) == 0 {
+		if len(m.scopes()) == 0 {
 			return
 		}
-		service, installURL, targetID := m.service, m.installURL, m.workspace.Scopes[m.dialogIndex].ID
+		service, installURL, targetID := m.service, m.installURL, m.scopes()[m.dialogIndex].ID
 		m.runInBackground("Installing skill...", func() func(*model) {
 			result, err := service.InstallSkillFromURL(installURL, targetID)
 			return func(m *model) {
@@ -369,16 +387,25 @@ func (m *model) submitDialog() {
 				m.setMessage("Skill installed via " + result.Method + ".")
 			}
 		})
+	case dialogAgents:
+		var tracked []string
+		for _, agent := range m.workspace.Agents {
+			if m.agentSelection[agent.ID] {
+				tracked = append(tracked, agent.ID)
+			}
+		}
+		workspace, err := m.service.SetTrackedAgents(tracked)
+		m.applyWorkspace(workspace, err, "Tracked agents updated.")
 	case dialogRegistryResults:
 		if len(m.registry) == 0 {
 			return
 		}
 		m.registryChoice, m.dialog, m.dialogIndex = m.dialogIndex, dialogRegistryTarget, m.scopeIndex
 	case dialogRegistryTarget:
-		if len(m.workspace.Scopes) == 0 || m.registryChoice >= len(m.registry) {
+		if len(m.scopes()) == 0 || m.registryChoice >= len(m.registry) {
 			return
 		}
-		service, skill, target := m.service, m.registry[m.registryChoice], m.workspace.Scopes[m.dialogIndex]
+		service, skill, target := m.service, m.registry[m.registryChoice], m.scopes()[m.dialogIndex]
 		m.runInBackground("Installing "+skill.Name+" from skills.sh...", func() func(*model) {
 			result, err := service.InstallRegistrySkill(skill.Source, skill.SkillID, target.ID)
 			return func(m *model) {
@@ -413,6 +440,7 @@ func (m *model) refresh(message string) {
 	m.workspace = workspace
 	m.normalizeSelection()
 	m.setMessage(message)
+	m.showWarnings()
 }
 
 func (m *model) removeSelectedProject() {
@@ -428,7 +456,7 @@ func (m *model) removeSelectedProject() {
 
 func (m *model) moveSelection(offset int) {
 	if m.focusScopes {
-		m.scopeIndex = boundedIndex(m.scopeIndex+offset, len(m.workspace.Scopes))
+		m.scopeIndex = boundedIndex(m.scopeIndex+offset, len(m.scopes()))
 		m.skillIndex = 0
 		return
 	}
@@ -441,9 +469,11 @@ func (m *model) moveDialogSelection(offset int) {
 	case dialogMode:
 		limit = len(invocationModes())
 	case dialogCopy, dialogInstallTo, dialogRegistryTarget:
-		limit = len(m.workspace.Scopes)
+		limit = len(m.scopes())
 	case dialogRegistryResults:
 		limit = len(m.registry)
+	case dialogAgents:
+		limit = len(m.workspace.Agents)
 	}
 	m.dialogIndex = boundedIndex(m.dialogIndex+offset, limit)
 }
@@ -459,15 +489,34 @@ func boundedIndex(index, length int) int {
 }
 
 func (m *model) normalizeSelection() {
-	m.scopeIndex = boundedIndex(m.scopeIndex, len(m.workspace.Scopes))
+	m.scopeIndex = boundedIndex(m.scopeIndex, len(m.scopes()))
 	m.skillIndex = boundedIndex(m.skillIndex, len(m.skillsForSelectedScope()))
 }
 
+// scopes are the lanes the TUI shows: agents the user stopped tracking are
+// reported by discovery (so conflicts stay accurate) but not drawn.
+func (m *model) scopes() []domain.Scope {
+	visible := make([]domain.Scope, 0, len(m.workspace.Scopes))
+	for _, scope := range m.workspace.Scopes {
+		if !scope.Hidden {
+			visible = append(visible, scope)
+		}
+	}
+	return visible
+}
+
+// showWarnings surfaces non-fatal discovery problems, such as invalid preferences.
+func (m *model) showWarnings() {
+	if len(m.workspace.Warnings) > 0 {
+		m.setError(strings.Join(m.workspace.Warnings, " "))
+	}
+}
+
 func (m *model) selectedScope() *domain.Scope {
-	if len(m.workspace.Scopes) == 0 {
+	if len(m.scopes()) == 0 {
 		return nil
 	}
-	return &m.workspace.Scopes[m.scopeIndex]
+	return &m.scopes()[m.scopeIndex]
 }
 
 func (m *model) skillsForSelectedScope() []domain.Skill {

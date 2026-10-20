@@ -23,10 +23,16 @@ export function InstallSkillFromURL(arg1:string,arg2:string):Promise<domain.Skil
 
 export function RemoveProject(arg1:string):Promise<domain.DiscoveryResult>;
 
+export function ReorderProjects(arg1:Array<string>):Promise<domain.DiscoveryResult>;
+
 export function SearchRegistrySkills(arg1:string):Promise<Array<domain.RegistrySkill>>;
 
 export function SelectProjectFolder():Promise<string>;
 
+export function SetAgentOrder(arg1:Array<string>):Promise<domain.DiscoveryResult>;
+
 export function SetSkillInvocationMode(arg1:string,arg2:string):Promise<domain.DiscoveryResult>;
+
+export function SetTrackedAgents(arg1:Array<string>):Promise<domain.DiscoveryResult>;
 
 export function SyncGlobalSkills():Promise<domain.DiscoveryResult>;

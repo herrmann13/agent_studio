@@ -31,7 +31,7 @@ make build-tui
 ./build/bin/agstudio
 ```
 
-Use `Tab` to move between scopes and skills, arrow keys or `j`/`k` to navigate, and the footer shortcuts to copy, delete, install skills, search skills.sh (`s`), change invocation modes, and manage projects.
+Use `Tab` to move between scopes and skills, arrow keys or `j`/`k` to navigate, and the footer shortcuts to copy, delete, install skills, search skills.sh (`s`), choose tracked agents (`a`), change invocation modes, and manage projects.
 
 ## Screenshots
 
@@ -42,6 +42,7 @@ Use `Tab` to move between scopes and skills, arrow keys or `j`/`k` to navigate, 
 
 - **Discover your setup** — a read-only scan of your installed agents (OpenCode, Claude Code, and Codex) and the skills each one has.
 - **Organize with scopes** — skills live in two places: **Agent** (per tool) and **Project** (per repository).
+- **Arrange your workspace** — drag an agent or project lane by its ⠿ grip (or focus it and use the arrow keys) to reorder it; use **Agents** to choose which installed agents are shown, or *Stop tracking* from a lane's ⋮ menu. Hiding an agent never touches its files.
 - **Copy with drag-and-drop** — move a skill from one scope to another with a simple drag.
 - **Track projects** — add a project folder to get a dedicated `.agents/skills` destination for it.
 - **Search skills.sh** — type a name in *Add skill* (any lane's ⋮ menu) or press `s` in the terminal interface to search the public [skills.sh](https://skills.sh) directory and install a result into any scope.

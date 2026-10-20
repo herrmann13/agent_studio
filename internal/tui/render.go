@@ -92,12 +92,12 @@ func selectableLine(text string, isSelected, isFocused bool) styledLine {
 
 func (m *model) scopeLines(height int) []styledLine {
 	lines := []styledLine{{text: "SCOPES", style: mutedColor}}
-	if len(m.workspace.Scopes) == 0 {
+	if len(m.scopes()) == 0 {
 		return append(lines, styledLine{text: "  No scopes found.", style: mutedColor})
 	}
-	start, end := listWindow(m.scopeIndex, len(m.workspace.Scopes), height-1)
+	start, end := listWindow(m.scopeIndex, len(m.scopes()), height-1)
 	for index := start; index < end; index++ {
-		lines = append(lines, selectableLine(m.workspace.Scopes[index].Name, index == m.scopeIndex, m.focusScopes))
+		lines = append(lines, selectableLine(m.scopes()[index].Name, index == m.scopeIndex, m.focusScopes))
 	}
 	return lines
 }
@@ -158,6 +158,21 @@ func (m *model) dialogLines() []styledLine {
 		for index, mode := range invocationModes() {
 			lines = append(lines, selectableLine(mode, index == m.dialogIndex, true))
 		}
+	case dialogAgents:
+		for index, agent := range m.workspace.Agents {
+			box := "[ ]"
+			if m.agentSelection[agent.ID] {
+				box = "[x]"
+			}
+			label := box + " " + agent.Name
+			if agent.Version != "" {
+				label += " · " + agent.Version
+			}
+			lines = append(lines, selectableLine(label, index == m.dialogIndex, true))
+		}
+		if len(m.workspace.Agents) == 0 {
+			lines = append(lines, styledLine{text: "  No supported agent is installed.", style: mutedColor})
+		}
 	case dialogRegistryResults:
 		start, end := listWindow(m.dialogIndex, len(m.registry), REGISTRY_VISIBLE_RESULTS)
 		for index := start; index < end; index++ {
@@ -166,7 +181,7 @@ func (m *model) dialogLines() []styledLine {
 			lines = append(lines, selectableLine(label, index == m.dialogIndex, true))
 		}
 	case dialogCopy, dialogInstallTo, dialogRegistryTarget:
-		for index, scope := range m.workspace.Scopes {
+		for index, scope := range m.scopes() {
 			lines = append(lines, selectableLine(scope.Name, index == m.dialogIndex, true))
 		}
 	case dialogDelete:
@@ -184,10 +199,13 @@ func (m *model) footerLine() styledLine {
 		return styledLine{text: "working · input paused · ctrl+c quit", style: mutedColor}
 	}
 	if m.dialog == dialogNone {
-		return styledLine{text: "tab panel · ↑↓ move · m mode · c copy · d delete · i install · s search skills.sh · p/P add/remove project · r refresh · q quit", style: mutedColor}
+		return styledLine{text: "tab panel · ↑↓ move · m mode · c copy · d delete · i install · s search skills.sh · a agents · p/P add/remove project · r refresh · q quit", style: mutedColor}
 	}
 	if m.dialog == dialogDelete {
 		return styledLine{text: "y confirm · n/esc cancel", style: mutedColor}
+	}
+	if m.dialog == dialogAgents {
+		return styledLine{text: "space toggle · enter save · esc cancel", style: mutedColor}
 	}
 	return styledLine{text: "enter confirm · esc cancel", style: mutedColor}
 }
@@ -259,6 +277,8 @@ func dialogTitle(value dialog) string {
 		return "skills.sh results"
 	case dialogRegistryTarget:
 		return "Install skills.sh result into scope"
+	case dialogAgents:
+		return "Tracked agents (hidden agents keep their files; Global still reaches them)"
 	default:
 		return ""
 	}
