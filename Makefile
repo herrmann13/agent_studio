@@ -6,7 +6,7 @@ WAILS_TAGS ?= $(if $(filter Linux,$(shell uname -s)),-tags webkit2_41)
 VERSION ?= dev
 
 .DEFAULT_GOAL := help
-.PHONY: help setup dev dev-browser test check build package package-macos package-linux package-appimage clean
+.PHONY: help setup dev dev-browser dev-tui test check build build-tui package package-macos package-linux package-appimage clean
 
 help: ## List the available local development commands.
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -20,6 +20,9 @@ dev: setup ## Start the desktop app with frontend and Go hot reload.
 dev-browser: setup ## Start Wails development and open the integrated browser endpoint.
 	@$(WAILS) dev $(WAILS_TAGS) -browser
 
+dev-tui: ## Start the Agent Studio terminal interface.
+	@go run ./cmd/agstudio
+
 test: ## Run frontend compilation and Go tests.
 	@BUN="$(BUN)" bash scripts/test.sh
 
@@ -29,6 +32,10 @@ check: test ## Run all local validation, including whitespace checks.
 
 build: ## Build a production application for the current platform.
 	@VERSION="$(VERSION)" WAILS="$(WAILS)" WAILS_TAGS="$(WAILS_TAGS)" bash scripts/build.sh
+
+build-tui: ## Build the Agent Studio terminal interface.
+	@mkdir -p build/bin
+	@go build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/bin/agstudio ./cmd/agstudio
 
 package: ## Create the native package for the current platform.
 	@case "$$(uname -s)" in Darwin) $(MAKE) package-macos VERSION="$(VERSION)" ;; Linux) $(MAKE) package-linux VERSION="$(VERSION)" ;; *) echo "Unsupported platform: $$(uname -s)"; exit 1 ;; esac
