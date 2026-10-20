@@ -1,4 +1,4 @@
-import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useRef, useState} from 'react';
+import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useRef, useState} from 'react';
 import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallRegistrySkill, InstallSkillFromURL, RemoveProject, ReorderProjects, SearchRegistrySkills, SelectProjectFolder, SetAgentOrder, SetSkillInvocationMode, SetTrackedAgents, SyncGlobalSkills} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
 import {BrowserOpenURL} from '../wailsjs/runtime/runtime';
@@ -284,7 +284,12 @@ function App() {
     // Agents the user stopped tracking are still reported (their skills count for
     // conflicts and shared-file warnings) but get no lane and are no destination.
     const scopes = (workspace?.scopes ?? []).filter((scope) => !scope.hidden);
-    const visibleScopeIDs = new Set(scopes.map((scope) => scope.id));
+    // Memoized so the Add skill dialog's per-target name lookup is not rebuilt on
+    // every keystroke.
+    const visibleSkills = useMemo(() => {
+        const visibleIDs = new Set((workspace?.scopes ?? []).filter((scope) => !scope.hidden).map((scope) => scope.id));
+        return (workspace?.skills ?? []).filter((skill) => visibleIDs.has(skill.scopeId));
+    }, [workspace]);
     // The Global lane leads the Agents section: a skill dropped there reaches every installed agent.
     const globalScopes = scopes.filter((scope) => scope.kind === 'global');
     const agentLaneScopes = scopes.filter((scope) => scope.kind === 'agent');
@@ -339,7 +344,7 @@ function App() {
 
             {addSkillTarget ? <AddSkillModal
                 target={addSkillTarget}
-                skills={(workspace?.skills ?? []).filter((skill) => visibleScopeIDs.has(skill.scopeId))}
+                skills={visibleSkills}
                 search={skillSearch}
                 onSearch={setSkillSearch}
                 onAdd={(skill) => void addSkillToProject(skill, addSkillTarget)}
@@ -347,7 +352,16 @@ function App() {
                 onClose={() => setAddSkillTarget(undefined)}
             /> : null}
             {isAgentsDialogOpen && workspace ? <AgentsDialog agents={workspace.agents} onSave={(ids) => void setTrackedAgents(ids, 'Tracked agents updated.')} onClose={() => setIsAgentsDialogOpen(false)}/> : null}
-            {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
+            {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} skills={workspace?.skills ?? []} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onInstallRegistry={async (skill, target) => {
+                // Shares isInstalling with URL installs, so the dialog cannot be
+                // closed (Escape, backdrop, ×, Cancel) or edited mid-install.
+                setIsInstalling(true);
+                try {
+                    await installRegistrySkill(skill, target);
+                } finally {
+                    setIsInstalling(false);
+                }
+            }} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
             {availableUpdate ? <UpdateDialog update={availableUpdate} isUpdating={isUpdating} onInstall={() => void installUpdate()} onClose={() => { if (!isUpdating) setAvailableUpdate(undefined); }}/> : null}
             {pendingDeletion ? <DeleteSkillDialog skill={pendingDeletion} sharedWith={scopesSharingSkill(workspace, pendingDeletion)} isDeleting={isDeleting} onDelete={() => void deleteSkill()} onClose={() => { if (!isDeleting) setPendingDeletion(undefined); }}/> : null}
         </main>
@@ -550,6 +564,10 @@ function SectionHeading({title}: {title: string}) {
 const REGISTRY_MINIMUM_QUERY = 2;
 const REGISTRY_SEARCH_DELAY_MS = 350;
 
+// LOCAL_PREVIEW_COUNT keeps local matches short while searching, so the
+// skills.sh results stay in view in the 768px-tall desktop window.
+const LOCAL_PREVIEW_COUNT = 3;
+
 function AddSkillModal({target, skills, search, onSearch, onAdd, onInstallRegistry, onClose}: {
     target: domain.Scope;
     skills: domain.Skill[];
@@ -560,117 +578,170 @@ function AddSkillModal({target, skills, search, onSearch, onAdd, onInstallRegist
     onClose: () => void;
 }) {
     const normalizedSearch = search.trim().toLowerCase();
-    const targetNames = new Set(skills.filter((skill) => skill.scopeId === target.id).map((skill) => skill.name.toLowerCase()));
+    const targetNames = useMemo(() => namesInScope(skills, target.id), [skills, target.id]);
     const availableSkills = skills.filter((skill) => !normalizedSearch || `${skill.name} ${skill.description}`.toLowerCase().includes(normalizedSearch));
     const searchesRegistry = normalizedSearch.length >= REGISTRY_MINIMUM_QUERY;
-    const [registryResults, setRegistryResults] = useState<domain.RegistrySkill[]>([]);
-    const [registryStatus, setRegistryStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
-    const [registryError, setRegistryError] = useState('');
+    // "Show all" applies to the query it was clicked for, so typing collapses the
+    // local list again without an extra render.
+    const [showAllFor, setShowAllFor] = useState<string>();
+    const [isInstalling, setIsInstalling] = useState(false);
+    const visibleLocal = searchesRegistry && showAllFor !== normalizedSearch ? availableSkills.slice(0, LOCAL_PREVIEW_COUNT) : availableSkills;
+
+    return <div className="modal-backdrop" role="presentation" onClick={() => { if (!isInstalling) onClose(); }}>
+        <section className="skill-modal" role="dialog" aria-modal="true" aria-labelledby="add-skill-title" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-heading"><h2 id="add-skill-title">Add skill to {target.name}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isInstalling}>×</button></div>
+            {/* Locked while a skills.sh install runs, so its row and any error stay visible. */}
+            <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search your skills, or type a name to search skills.sh" disabled={isInstalling} autoFocus/>
+            <div className="modal-skill-list">
+                {searchesRegistry ? <h3 className="modal-skill-section">On this computer ({availableSkills.length})</h3> : null}
+                {visibleLocal.map((skill) => {
+                    const alreadyAdded = targetNames.has(skill.name.toLowerCase());
+                    // While searching, local rows are one line (description in the
+                    // tooltip) so the skills.sh results below stay in view.
+                    return <article className={`modal-skill-row ${searchesRegistry ? 'is-compact' : ''}`} key={`${skill.id}-${skill.scopeId}`} title={searchesRegistry ? skill.description : undefined}><div><strong>{skill.name}</strong>{searchesRegistry ? null : <p className="modal-skill-description" title={skill.description}>{skill.description}</p>}<small>{skill.scopeId}</small></div><button type="button" disabled={alreadyAdded || isInstalling} onClick={() => onAdd(skill)}>{alreadyAdded ? 'Added' : 'Add'}</button></article>;
+                })}
+                {visibleLocal.length < availableSkills.length ? <button className="modal-show-more" type="button" onClick={() => setShowAllFor(normalizedSearch)}>Show all {availableSkills.length} local matches</button> : null}
+                {!availableSkills.length ? <p className="empty-state">No skills on this computer match your search.</p> : null}
+                {searchesRegistry ? <RegistryResults query={search} targetName={target.name} targetNames={targetNames} onInstall={onInstallRegistry} onBusyChange={setIsInstalling}/> : null}
+            </div>
+        </section>
+    </div>;
+}
+
+// RegistryResults searches skills.sh once typing pauses (a response for an older
+// query is ignored) and installs a result into the dialog's target.
+function RegistryResults({query, targetName, targetNames, onInstall, onBusyChange}: {
+    query: string;
+    targetName: string;
+    targetNames: Set<string>;
+    onInstall: (skill: domain.RegistrySkill) => Promise<void>;
+    onBusyChange?: (isBusy: boolean) => void;
+}) {
+    const trimmed = query.trim();
+    const [results, setResults] = useState<domain.RegistrySkill[]>([]);
+    const [status, setStatus] = useState<'loading' | 'done' | 'error'>('loading');
+    const [searchError, setSearchError] = useState('');
     const [installingID, setInstallingID] = useState<string>();
     const [installError, setInstallError] = useState<{id: string; message: string}>();
 
-    // Local skills filter as you type; skills.sh is queried once typing pauses, and
-    // a response for an older query is ignored.
     useEffect(() => {
-        if (!searchesRegistry) {
-            setRegistryResults([]);
-            setRegistryStatus('idle');
-            return;
-        }
         let isCurrent = true;
-        setRegistryStatus('loading');
+        setStatus('loading');
         const timer = window.setTimeout(() => {
-            SearchRegistrySkills(search.trim())
-                .then((results) => {
+            SearchRegistrySkills(trimmed)
+                .then((found) => {
                     if (!isCurrent) return;
-                    setRegistryResults(results ?? []);
-                    setRegistryStatus('done');
+                    setResults(found ?? []);
+                    setStatus('done');
                 })
                 .catch((error) => {
                     if (!isCurrent) return;
-                    setRegistryError(error instanceof Error ? error.message : String(error));
-                    setRegistryStatus('error');
+                    setSearchError(error instanceof Error ? error.message : String(error));
+                    setStatus('error');
                 });
         }, REGISTRY_SEARCH_DELAY_MS);
         return () => {
             isCurrent = false;
             window.clearTimeout(timer);
         };
-    }, [search, searchesRegistry]);
+    }, [trimmed]);
 
     async function install(skill: domain.RegistrySkill) {
         setInstallingID(skill.id);
         setInstallError(undefined);
+        onBusyChange?.(true);
         try {
-            await onInstallRegistry(skill);
+            await onInstall(skill);
         } catch (error) {
             setInstallError({id: skill.id, message: error instanceof Error ? error.message : String(error)});
         } finally {
             setInstallingID(undefined);
+            onBusyChange?.(false);
         }
     }
 
-    return <div className="modal-backdrop" role="presentation" onClick={() => { if (!installingID) onClose(); }}>
-        <section className="skill-modal" role="dialog" aria-modal="true" aria-labelledby="add-skill-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><h2 id="add-skill-title">Add skill to {target.name}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={Boolean(installingID)}>×</button></div>
-            <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search your skills, or type a name to search skills.sh" autoFocus/>
-            <div className="modal-skill-list">
-                {searchesRegistry ? <h3 className="modal-skill-section">On this computer</h3> : null}
-                {availableSkills.map((skill) => {
-                    const alreadyAdded = targetNames.has(skill.name.toLowerCase());
-                    return <article className="modal-skill-row" key={`${skill.id}-${skill.scopeId}`}><div><strong>{skill.name}</strong><p className="modal-skill-description" title={skill.description}>{skill.description}</p><small>{skill.scopeId}</small></div><button type="button" disabled={alreadyAdded} onClick={() => onAdd(skill)}>{alreadyAdded ? 'Added' : 'Add'}</button></article>;
-                })}
-                {!availableSkills.length ? <p className="empty-state">No skills match your search.</p> : null}
-                {searchesRegistry ? <>
-                    <h3 className="modal-skill-section">From skills.sh</h3>
-                    {registryStatus === 'loading' ? <p className="empty-state">Searching skills.sh...</p> : null}
-                    {registryStatus === 'error' ? <p className="empty-state registry-error">{registryError}</p> : null}
-                    {registryStatus === 'done' && !registryResults.length ? <p className="empty-state">No skills.sh results for “{search.trim()}”.</p> : null}
-                    {registryStatus === 'done' ? registryResults.map((skill) => {
-                        // A same-named folder already exists in the target, so installing would
-                        // be refused; it may be a different skill, hence not "Installed".
-                        const nameInUse = targetNames.has(skill.name.toLowerCase());
-                        const isInstalling = installingID === skill.id;
-                        return <article className="modal-skill-row" key={skill.id}>
-                            <div>
-                                <strong>{skill.name}</strong>
-                                <p><a href={skill.url} onClick={(event) => { event.preventDefault(); BrowserOpenURL(skill.url); }}>{skill.source}</a> · {formatInstalls(skill.installs)} installs</p>
-                                {installError?.id === skill.id ? <small className="registry-error">{installError.message}</small> : null}
-                            </div>
-                            <button type="button" disabled={nameInUse || Boolean(installingID)} title={nameInUse ? `${target.name} already has a skill named ${skill.name}` : undefined} onClick={() => void install(skill)}>{nameInUse ? 'Name in use' : isInstalling ? 'Installing...' : 'Install'}</button>
-                        </article>;
-                    }) : null}
-                </> : null}
-            </div>
-        </section>
-    </div>;
+    return <>
+        <h3 className="modal-skill-section">From skills.sh{status === 'done' ? ` (${results.length})` : ''}</h3>
+        {status === 'loading' ? <p className="empty-state">Searching skills.sh...</p> : null}
+        {status === 'error' ? <p className="empty-state registry-error">{searchError}</p> : null}
+        {status === 'done' && !results.length ? <p className="empty-state">No skills.sh results for “{trimmed}”.</p> : null}
+        {status === 'done' ? results.map((skill) => {
+            // A same-named folder already exists in the target, so installing would
+            // be refused; it may be a different skill, hence not "Installed".
+            const nameInUse = targetNames.has(skill.name.toLowerCase());
+            return <article className="modal-skill-row" key={skill.id}>
+                <div>
+                    <strong>{skill.name}</strong>
+                    <p><a href={skill.url} onClick={(event) => { event.preventDefault(); BrowserOpenURL(skill.url); }}>{skill.source}</a> · {formatInstalls(skill.installs)} installs</p>
+                    {installError?.id === skill.id ? <small className="registry-error">{installError.message}</small> : null}
+                </div>
+                <button type="button" disabled={nameInUse || Boolean(installingID)} title={nameInUse ? `${targetName} already has a skill named ${skill.name}` : undefined} onClick={() => void install(skill)}>{nameInUse ? 'Name in use' : installingID === skill.id ? 'Installing...' : 'Install'}</button>
+            </article>;
+        }) : null}
+    </>;
 }
 
 function formatInstalls(installs: number) {
     return new Intl.NumberFormat('en', {notation: 'compact', maximumFractionDigits: 1}).format(installs);
 }
 
-function InstallSkillDialog({url, targetID, scopes, isInstalling, onURLChange, onTargetChange, onSubmit, onClose}: {
+type InstallInput = 'source' | 'unsupported-url' | 'search' | 'empty';
+
+// classifyInstallInput mirrors parseRepositoryURL in github_install.go: only an
+// https:// URL or an `npx skills add` command can be installed directly. Other
+// URL-like text would be rejected there, so it gets a hint instead of a search;
+// anything else (including an `owner/repository` slug) searches skills.sh.
+function classifyInstallInput(value: string): InstallInput {
+    const input = value.trim();
+    if (/^(https:\/\/|npx\s)/i.test(input)) return 'source';
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input) || /^git@/i.test(input) || /^[\w-]+(\.[\w-]+)+\//.test(input)) return 'unsupported-url';
+    return input.length >= REGISTRY_MINIMUM_QUERY ? 'search' : 'empty';
+}
+
+function namesInScope(skills: domain.Skill[], scopeID: string) {
+    return new Set(skills.filter((skill) => skill.scopeId === scopeID).map((skill) => skill.name.toLowerCase()));
+}
+
+function InstallSkillDialog({url, targetID, scopes, skills, isInstalling, onURLChange, onTargetChange, onSubmit, onInstallRegistry, onClose}: {
     url: string;
     targetID: string;
     scopes: domain.Scope[];
+    skills: domain.Skill[];
     isInstalling: boolean;
     onURLChange: (value: string) => void;
     onTargetChange: (value: string) => void;
     onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+    onInstallRegistry: (skill: domain.RegistrySkill, target: domain.Scope) => Promise<void>;
     onClose: () => void;
 }) {
+    const target = scopes.find((scope) => scope.id === targetID);
+    const kind = classifyInstallInput(url);
+    const targetNames = useMemo(() => namesInScope(skills, targetID), [skills, targetID]);
+
+    // Enter only installs a URL or npx command; for a name, results are already
+    // listed below, and the name must never reach the URL installer.
+    function submit(event: FormEvent<HTMLFormElement>) {
+        if (kind !== 'source') {
+            event.preventDefault();
+            return;
+        }
+        onSubmit(event);
+    }
+
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-skill-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-heading"><h2 id="install-skill-title">Install skill</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isInstalling}>×</button></div>
-            <p className="install-help">Paste a public GitHub, GitLab, or Bitbucket repository URL, or an <code>npx skills add</code> command. Agent Studio will use Git when available and ZIP otherwise.</p>
-            <form className="install-dialog-form" onSubmit={onSubmit}>
-                <label htmlFor="skill-url">Repository URL or npx command</label>
-                <input id="skill-url" value={url} onChange={(event) => onURLChange(event.target.value)} placeholder="https://github.com/owner/repository/tree/main/skills/my-skill" autoFocus required/>
-                <small className="install-hint">Also accepts <code>npx skills add https://github.com/owner/repository --skill my-skill</code></small>
+            <p className="install-help">Type a skill name to search <a href="https://skills.sh" onClick={(event) => { event.preventDefault(); BrowserOpenURL('https://skills.sh'); }}>skills.sh</a>, or paste a public GitHub, GitLab, or Bitbucket repository URL or an <code>npx skills add</code> command. Agent Studio will use Git when available and ZIP otherwise.</p>
+            <form className="install-dialog-form" onSubmit={submit}>
                 <label htmlFor="skill-target">Install into</label>
-                <select id="skill-target" value={targetID} onChange={(event) => onTargetChange(event.target.value)} required>{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
-                <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isInstalling}>Cancel</button><button type="submit" className="install-submit" disabled={isInstalling}>{isInstalling ? 'Installing...' : 'Install skill'}</button></div>
+                <select id="skill-target" value={targetID} onChange={(event) => onTargetChange(event.target.value)} disabled={isInstalling} required>{scopes.map((scope) => <option key={scope.id} value={scope.id}>{scope.name}</option>)}</select>
+                <label htmlFor="skill-url">Skill name, repository URL, or npx command</label>
+                <input id="skill-url" value={url} onChange={(event) => onURLChange(event.target.value)} placeholder="grill-me  ·  https://github.com/owner/repository" disabled={isInstalling} autoFocus required/>
+                {kind === 'unsupported-url'
+                    ? <small className="install-hint registry-error">Only <code>https://</code> GitHub, GitLab, or Bitbucket URLs (or an <code>npx skills add</code> command) can be installed.</small>
+                    : <small className="install-hint">Also accepts <code>npx skills add https://github.com/owner/repository --skill my-skill</code></small>}
+                {kind === 'search' && target ? <div className="install-registry-results"><RegistryResults query={url} targetName={target.name} targetNames={targetNames} onInstall={(skill) => onInstallRegistry(skill, target)}/></div> : null}
+                <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isInstalling}>Cancel</button>{kind === 'search' ? null : <button type="submit" className="install-submit" disabled={isInstalling || kind !== 'source'}>{isInstalling ? 'Installing...' : 'Install skill'}</button>}</div>
             </form>
         </section>
     </div>;

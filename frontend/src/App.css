@@ -36,3 +36,11 @@
 .agent-choice input { margin-top: .2rem; accent-color: var(--signal); }
 .agent-choice span { display: grid; min-width: 0; gap: .2rem; }
 .agent-choice small { overflow: hidden; color: var(--text-faint); font-size: .68rem; text-overflow: ellipsis; white-space: nowrap; }
+.modal-show-more { display: block; width: 100%; margin: .2rem 0 .4rem; border: 1px dashed var(--line-strong); border-radius: 2px; padding: .5rem; background: transparent; color: var(--text-dim); font: inherit; font-size: .75rem; cursor: pointer; }
+.modal-show-more:hover { border-color: var(--signal); color: var(--signal); }
+.install-help a { color: var(--text); }
+.install-registry-results { max-height: 34vh; overflow-y: auto; margin-top: .4rem; border-top: 1px solid var(--line); padding-right: .25rem; }
+.install-registry-results .modal-skill-section { margin-top: .6rem; }
+.modal-skill-row.is-compact { padding: .45rem 0; }
+.modal-skill-row.is-compact > div { display: flex; min-width: 0; align-items: baseline; gap: .6rem; }
+.modal-skill-row.is-compact button { padding: .35rem .65rem; }
