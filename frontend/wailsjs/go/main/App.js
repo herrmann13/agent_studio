@@ -30,12 +30,20 @@ export function DownloadAndInstallUpdate(arg1) {
   return window['go']['main']['App']['DownloadAndInstallUpdate'](arg1);
 }
 
+export function InstallRegistrySkill(arg1, arg2, arg3) {
+  return window['go']['main']['App']['InstallRegistrySkill'](arg1, arg2, arg3);
+}
+
 export function InstallSkillFromURL(arg1, arg2) {
   return window['go']['main']['App']['InstallSkillFromURL'](arg1, arg2);
 }
 
 export function RemoveProject(arg1) {
   return window['go']['main']['App']['RemoveProject'](arg1);
+}
+
+export function SearchRegistrySkills(arg1) {
+  return window['go']['main']['App']['SearchRegistrySkills'](arg1);
 }
 
 export function SelectProjectFolder() {

@@ -28,10 +28,11 @@ import (
 // otherwise race on the same projects.json/skill-policies.json files and native
 // configs. mu serializes every public operation so state changes stay consistent.
 type DiscoveryService struct {
-	home     string
-	env      adapters.Environment
-	adapters []adapters.Adapter
-	mu       sync.Mutex
+	home        string
+	env         adapters.Environment
+	adapters    []adapters.Adapter
+	registryURL string
+	mu          sync.Mutex
 }
 
 func NewDiscoveryService(home string) *DiscoveryService {
@@ -41,7 +42,7 @@ func NewDiscoveryService(home string) *DiscoveryService {
 // NewDiscoveryServiceWithEnvironment builds a service over a custom view of the
 // machine, so tests control which agents appear installed.
 func NewDiscoveryServiceWithEnvironment(env adapters.Environment) *DiscoveryService {
-	return &DiscoveryService{home: env.Home, env: env, adapters: []adapters.Adapter{opencode.Adapter{}, claude.Adapter{}, codex.Adapter{}}}
+	return &DiscoveryService{home: env.Home, env: env, adapters: []adapters.Adapter{opencode.Adapter{}, claude.Adapter{}, codex.Adapter{}}, registryURL: defaultRegistryURL}
 }
 
 func DefaultDiscoveryService() (*DiscoveryService, error) {
@@ -265,8 +266,9 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 
 // SyncGlobalSkills gives every installed agent that cannot read `~/.agents/skills`
 // its marked copy of each Global skill, refreshing stale copies. It covers skills
-// placed there outside Agent Studio and agents installed after a skill was added.
-// A name already taken by an agent's own skill is skipped and reported.
+// placed there outside Agent Studio and agents installed after a skill was added,
+// and removes marked copies whose global skill no longer exists. A name already
+// taken by an agent's own skill is skipped and reported.
 func (s *DiscoveryService) SyncGlobalSkills() (domain.DiscoveryResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -274,12 +276,16 @@ func (s *DiscoveryService) SyncGlobalSkills() (domain.DiscoveryResult, error) {
 	if err != nil {
 		return domain.DiscoveryResult{}, err
 	}
+	if err := s.removeOrphanedGlobalCopies(); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	roots := s.globalCopyRoots(true)
 	var skipped []string
 	for _, skill := range workspace.Skills {
 		if skill.ScopeID != "global" {
 			continue
 		}
-		if err := s.propagateToGlobalAgents(filepath.Dir(skill.Path)); err != nil {
+		if err := propagateToGlobalRoots(roots, filepath.Dir(skill.Path)); err != nil {
 			skipped = append(skipped, err.Error())
 		}
 	}
@@ -321,7 +327,7 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	} else if err := os.RemoveAll(filepath.Dir(skill.Path)); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
 	}
-	if err := s.removePropagatedCopiesForScope(scope, skillDirName(skill.Path)); err != nil {
+	if err := s.removePropagatedCopiesForScope(scope, skill.Path); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
 	return s.discover()
@@ -332,7 +338,7 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 // without depending on Agent Studio's own scope directory.
 func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir string) error {
 	if scope.Kind == "global" {
-		return s.propagateToGlobalAgents(skillDir)
+		return propagateToGlobalRoots(s.globalCopyRoots(true), skillDir)
 	}
 	if scope.Kind != "project" {
 		return nil
@@ -340,14 +346,16 @@ func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir strin
 	return s.propagateToProjectAgents(skillDir, projectRootFromScopeRoot(scope.Root))
 }
 
-func (s *DiscoveryService) removePropagatedCopiesForScope(scope domain.Scope, skillDirName string) error {
+// removePropagatedCopiesForScope takes the deleted skill's file path: a global
+// skill may be nested, so its copies are matched by full source directory.
+func (s *DiscoveryService) removePropagatedCopiesForScope(scope domain.Scope, skillPath string) error {
 	if scope.Kind == "global" {
-		return s.removeGlobalCopies(skillDirName)
+		return s.removeGlobalCopies(filepath.Dir(skillPath))
 	}
 	if scope.Kind != "project" {
 		return nil
 	}
-	return s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), skillDirName)
+	return s.removePropagatedCopies(projectRootFromScopeRoot(scope.Root), skillDirName(skillPath))
 }
 
 func (s *DiscoveryService) removeSkillPolicy(skill domain.Skill, scope domain.Scope) error {
@@ -420,6 +428,13 @@ func scanSkillFolders(root string) ([]string, error) {
 	var paths []string
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			// An unreadable nested folder only hides the skills inside it.
+			if path != root && entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			if path != root {
+				return nil
+			}
 			return walkErr
 		}
 		if !entry.IsDir() && entry.Name() == "SKILL.md" {
@@ -450,12 +465,11 @@ func scanOpenCodeV2Skills(root string) ([]string, error) {
 		for len(queue) > 0 {
 			current := queue[0]
 			queue = queue[1:]
+			// Like the CLI, an unreadable path (missing, a file, no permission)
+			// counts as empty instead of failing every other scope's discovery.
 			entries, err := os.ReadDir(current.directory)
-			if os.IsNotExist(err) {
-				continue
-			}
 			if err != nil {
-				return nil, fmt.Errorf("inspect skill directory %q: %w", current.directory, err)
+				continue
 			}
 			var files, directories []string
 			for _, entry := range entries {

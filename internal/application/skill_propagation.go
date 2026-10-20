@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/herrmann13/agent_studio/internal/adapters"
 	"github.com/herrmann13/agent_studio/internal/domain"
@@ -24,17 +25,76 @@ func (s *DiscoveryService) globalSkillRoot() string {
 	return filepath.Join(s.home, ".agents", "skills")
 }
 
-// installedGlobalCopyRoots lists the user-level skill directories of installed
-// agents that cannot read `~/.agents/skills` themselves (today only Claude Code).
-func (s *DiscoveryService) installedGlobalCopyRoots() []string {
+// globalCopyRoots lists the user-level skill directories of agents that cannot
+// read `~/.agents/skills` themselves (today only Claude Code). Copies are only
+// made for installed agents; cleanup also covers agents uninstalled since.
+func (s *DiscoveryService) globalCopyRoots(installedOnly bool) []string {
 	needsCopy := providersWithIndependentSkillCopy()
 	var roots []string
 	for _, adapter := range s.adapters {
-		if needsCopy[adapter.Provider()] && len(adapter.Detect(s.env)) > 0 {
-			roots = append(roots, adapter.UserSkillRoot(s.home))
+		if !needsCopy[adapter.Provider()] || (installedOnly && len(adapter.Detect(s.env)) == 0) {
+			continue
 		}
+		roots = append(roots, adapter.UserSkillRoot(s.home))
 	}
 	return roots
+}
+
+// globalTarget classifies what already sits at an agent's copy of a global skill.
+type globalTarget int
+
+const (
+	globalTargetMissing globalTarget = iota
+	// globalTargetManaged is a marked copy made by Agent Studio.
+	globalTargetManaged
+	// globalTargetLinked is a symlink to the global skill, as `npx skills` creates;
+	// the agent already reads the canonical copy through it.
+	globalTargetLinked
+	// globalTargetForeign is the agent's own skill, which is never touched.
+	globalTargetForeign
+)
+
+func globalTargetState(destination, globalDir string) (globalTarget, error) {
+	info, err := os.Lstat(destination)
+	if os.IsNotExist(err) {
+		return globalTargetMissing, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("inspect %s: %w", destination, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		if symlinkPointsTo(destination, globalDir) {
+			return globalTargetLinked, nil
+		}
+		return globalTargetForeign, nil
+	}
+	if isGlobalCopy(destination) {
+		return globalTargetManaged, nil
+	}
+	return globalTargetForeign, nil
+}
+
+// symlinkTarget returns where a link points, made absolute but not resolved, so
+// it also works for a link whose target was just removed (dangling).
+func symlinkTarget(link string) (string, bool) {
+	target, err := os.Readlink(link)
+	if err != nil {
+		return "", false
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(link), target)
+	}
+	return filepath.Clean(target), true
+}
+
+func symlinkPointsTo(link, directory string) bool {
+	if resolvedLink, err := filepath.EvalSymlinks(link); err == nil {
+		if resolvedDirectory, err := filepath.EvalSymlinks(directory); err == nil {
+			return resolvedLink == resolvedDirectory
+		}
+	}
+	target, ok := symlinkTarget(link)
+	return ok && target == filepath.Clean(directory)
 }
 
 // checkGlobalCopyTargets refuses before anything is written when an installed
@@ -43,54 +103,121 @@ func (s *DiscoveryService) checkGlobalCopyTargets(scope domain.Scope, skillDirNa
 	if scope.Kind != "global" {
 		return nil
 	}
-	for _, root := range s.installedGlobalCopyRoots() {
-		destination := filepath.Join(root, skillDirName)
-		if _, err := os.Stat(destination); os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return fmt.Errorf("inspect %s: %w", destination, err)
-		}
-		if !isGlobalCopy(destination) {
-			return fmt.Errorf("%s already contains its own %q skill; remove or rename it before making it global", root, skillDirName)
-		}
-	}
-	return nil
+	_, err := classifyGlobalTargets(s.globalCopyRoots(true), filepath.Join(s.globalSkillRoot(), skillDirName))
+	return err
 }
 
-func (s *DiscoveryService) propagateToGlobalAgents(sourceDir string) error {
-	skillDirName := filepath.Base(sourceDir)
-	if err := s.checkGlobalCopyTargets(domain.Scope{Kind: "global"}, skillDirName); err != nil {
+// classifyGlobalTargets inspects each root once and refuses if any of them holds
+// the agent's own skill under the same name.
+func classifyGlobalTargets(roots []string, globalDir string) ([]globalTarget, error) {
+	states := make([]globalTarget, len(roots))
+	for index, root := range roots {
+		state, err := globalTargetState(filepath.Join(root, filepath.Base(globalDir)), globalDir)
+		if err != nil {
+			return nil, err
+		}
+		if state == globalTargetForeign {
+			return nil, fmt.Errorf("%s already contains its own %q skill; remove or rename it before making it global", root, filepath.Base(globalDir))
+		}
+		states[index] = state
+	}
+	return states, nil
+}
+
+func propagateToGlobalRoots(roots []string, sourceDir string) error {
+	states, err := classifyGlobalTargets(roots, sourceDir)
+	if err != nil {
 		return err
 	}
-	for _, root := range s.installedGlobalCopyRoots() {
-		destination := filepath.Join(root, skillDirName)
+	for index, root := range roots {
+		if states[index] == globalTargetLinked {
+			continue
+		}
+		destination := filepath.Join(root, filepath.Base(sourceDir))
 		if err := copyDirectoryForce(sourceDir, destination); err != nil {
 			return fmt.Errorf("propagate skill to %s: %w", root, err)
 		}
-		if err := os.WriteFile(filepath.Join(destination, globalCopyMarker), []byte("Managed by Agent Studio: copy of "+sourceDir+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(destination, globalCopyMarker), []byte(globalCopyMarkerPrefix+sourceDir+"\n"), 0o644); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// removeGlobalCopies removes marked copies even for agents that were uninstalled
-// since, so a deleted global skill never lingers anywhere.
-func (s *DiscoveryService) removeGlobalCopies(skillDirName string) error {
-	needsCopy := providersWithIndependentSkillCopy()
-	for _, adapter := range s.adapters {
-		if !needsCopy[adapter.Provider()] {
-			continue
+// removeGlobalCopies removes a deleted global skill's marked copies and the
+// symlinks that pointed to it, so it never lingers in any agent. globalDir may be
+// nested below `~/.agents/skills`; copies are named after its last element.
+func (s *DiscoveryService) removeGlobalCopies(globalDir string) error {
+	for _, root := range s.globalCopyRoots(false) {
+		destination := filepath.Join(root, filepath.Base(globalDir))
+		state, err := globalTargetState(destination, globalDir)
+		if err != nil {
+			return err
 		}
-		destination := filepath.Join(adapter.UserSkillRoot(s.home), skillDirName)
-		if !isGlobalCopy(destination) {
-			continue
+		switch {
+		case state == globalTargetManaged && s.globalCopySource(destination) == filepath.Clean(globalDir):
+			err = os.RemoveAll(destination)
+		case state == globalTargetLinked:
+			err = os.Remove(destination)
 		}
-		if err := os.RemoveAll(destination); err != nil {
+		if err != nil {
 			return fmt.Errorf("remove global copy %s: %w", destination, err)
 		}
 	}
 	return nil
+}
+
+// removeOrphanedGlobalCopies deletes marked copies, and links into
+// `~/.agents/skills`, whose global skill was removed outside Agent Studio. Marked
+// copies are hidden from agent lanes, so without this the agent would keep
+// loading a skill nobody can see.
+func (s *DiscoveryService) removeOrphanedGlobalCopies() error {
+	globalRoot := filepath.Clean(s.globalSkillRoot())
+	for _, root := range s.globalCopyRoots(false) {
+		entries, err := os.ReadDir(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %s: %w", root, err)
+		}
+		for _, entry := range entries {
+			path := filepath.Join(root, entry.Name())
+			var source string
+			if entry.Type()&os.ModeSymlink != 0 {
+				target, ok := symlinkTarget(path)
+				if !ok || !strings.HasPrefix(target, globalRoot+string(filepath.Separator)) {
+					continue
+				}
+				source = target
+			} else if entry.IsDir() && isGlobalCopy(path) {
+				source = s.globalCopySource(path)
+			} else {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(source, "SKILL.md")); !os.IsNotExist(err) {
+				continue
+			}
+			if err := os.RemoveAll(path); err != nil {
+				return fmt.Errorf("remove orphaned global copy %s: %w", path, err)
+			}
+		}
+	}
+	return nil
+}
+
+const globalCopyMarkerPrefix = "Managed by Agent Studio: copy of "
+
+// globalCopySource reads the global skill a marked copy was made from. Markers
+// written before the source was recorded fall back to `~/.agents/skills/<name>`.
+func (s *DiscoveryService) globalCopySource(copyDir string) string {
+	content, err := os.ReadFile(filepath.Join(copyDir, globalCopyMarker))
+	if err == nil {
+		if source := strings.TrimSpace(strings.TrimPrefix(string(content), globalCopyMarkerPrefix)); source != "" && filepath.IsAbs(source) {
+			return filepath.Clean(source)
+		}
+	}
+	return filepath.Join(s.globalSkillRoot(), filepath.Base(copyDir))
 }
 
 func isGlobalCopy(skillDir string) bool {

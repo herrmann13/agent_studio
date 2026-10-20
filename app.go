@@ -89,6 +89,16 @@ func (a *App) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult
 	return a.discovery.CopySkill(skillPath, targetScopeID)
 }
 
+// SearchRegistrySkills searches the public skills.sh directory.
+func (a *App) SearchRegistrySkills(query string) ([]domain.RegistrySkill, error) {
+	return a.discovery.SearchRegistrySkills(query)
+}
+
+// InstallRegistrySkill installs a skills.sh search result into a selected scope.
+func (a *App) InstallRegistrySkill(source, skillID, targetScopeID string) (domain.SkillInstallResult, error) {
+	return a.discovery.InstallRegistrySkill(source, skillID, targetScopeID)
+}
+
 // SyncGlobalSkills copies Global skills to installed agents that cannot read them natively.
 func (a *App) SyncGlobalSkills() (domain.DiscoveryResult, error) {
 	return a.discovery.SyncGlobalSkills()

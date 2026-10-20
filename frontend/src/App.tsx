@@ -1,6 +1,7 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useRef, useState} from 'react';
-import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder, SetSkillInvocationMode, SyncGlobalSkills} from '../wailsjs/go/main/App';
+import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallRegistrySkill, InstallSkillFromURL, RemoveProject, SearchRegistrySkills, SelectProjectFolder, SetSkillInvocationMode, SyncGlobalSkills} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
+import {BrowserOpenURL} from '../wailsjs/runtime/runtime';
 import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
 import codexIcon from './assets/agents/Codex Logo - Colored - zonalogo.com.svg';
 import openCodeIcon from './assets/agents/opencode-logo-light.svg';
@@ -139,6 +140,13 @@ function App() {
         }
     }
 
+    // Errors propagate to the Add skill dialog, which shows them next to the result.
+    async function installRegistrySkill(skill: domain.RegistrySkill, target: domain.Scope) {
+        const result = await InstallRegistrySkill(skill.source, skill.skillId, target.id);
+        setWorkspace(normalizeWorkspace(result.workspace));
+        setMessage(`${skill.name} from skills.sh was installed into ${target.name} via ${result.method}.`);
+    }
+
     async function installFromURL(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (!skillURL.trim() || !skillTargetID) return;
@@ -224,7 +232,7 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading title="Agents"/>
                 <div className="scope-grid">
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onSyncGlobal={scope.kind === 'global' ? () => void syncGlobalSkills() : undefined}/>) }
+                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onSyncGlobal={scope.kind === 'global' ? () => void syncGlobalSkills() : undefined} onAddSkill={() => { setAddSkillTarget(scope); setSkillSearch(''); }}/>) }
                 </div>
             </section>
 
@@ -250,6 +258,7 @@ function App() {
                 search={skillSearch}
                 onSearch={setSkillSearch}
                 onAdd={(skill) => void addSkillToProject(skill, addSkillTarget)}
+                onInstallRegistry={(skill) => installRegistrySkill(skill, addSkillTarget)}
                 onClose={() => setAddSkillTarget(undefined)}
             /> : null}
             {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
@@ -343,9 +352,9 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
             <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? 'G' : 'P'}</span><strong>{scope.name}</strong></div>
             <div className="scope-actions">
                 <span>{skills.length}</span>
-                {scope.kind === 'project' && onRemoveProject ? <div className="project-menu-wrap">
-                    <button className="project-menu-button" type="button" aria-label={`Project menu for ${scope.name}`} aria-expanded={projectMenuOpen} onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((open) => !open); }}>⋮</button>
-                    {projectMenuOpen ? <div className="project-menu" role="menu" onClick={(event) => event.stopPropagation()}><button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onAddSkill?.(); }}>Add skill</button><button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onRemoveProject(); }}>Stop tracking</button></div> : null}
+                {onAddSkill || onRemoveProject ? <div className="project-menu-wrap">
+                    <button className="project-menu-button" type="button" aria-label={`Menu for ${scope.name}`} aria-expanded={projectMenuOpen} onClick={(event) => { event.stopPropagation(); setProjectMenuOpen((open) => !open); }}>⋮</button>
+                    {projectMenuOpen ? <div className="project-menu" role="menu" onClick={(event) => event.stopPropagation()}>{onAddSkill ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onAddSkill(); }}>Add skill</button> : null}{scope.kind === 'project' && onRemoveProject ? <button type="button" role="menuitem" onClick={() => { setProjectMenuOpen(false); onRemoveProject(); }}>Stop tracking</button> : null}</div> : null}
                 </div> : null}
             </div>
         </div>
@@ -394,31 +403,107 @@ function SectionHeading({title}: {title: string}) {
     return <div className="section-heading"><h2>{title}</h2></div>;
 }
 
-function AddSkillModal({target, skills, search, onSearch, onAdd, onClose}: {
+const REGISTRY_MINIMUM_QUERY = 2;
+const REGISTRY_SEARCH_DELAY_MS = 350;
+
+function AddSkillModal({target, skills, search, onSearch, onAdd, onInstallRegistry, onClose}: {
     target: domain.Scope;
     skills: domain.Skill[];
     search: string;
     onSearch: (value: string) => void;
     onAdd: (skill: domain.Skill) => void;
+    onInstallRegistry: (skill: domain.RegistrySkill) => Promise<void>;
     onClose: () => void;
 }) {
     const normalizedSearch = search.trim().toLowerCase();
     const targetNames = new Set(skills.filter((skill) => skill.scopeId === target.id).map((skill) => skill.name.toLowerCase()));
     const availableSkills = skills.filter((skill) => !normalizedSearch || `${skill.name} ${skill.description}`.toLowerCase().includes(normalizedSearch));
+    const searchesRegistry = normalizedSearch.length >= REGISTRY_MINIMUM_QUERY;
+    const [registryResults, setRegistryResults] = useState<domain.RegistrySkill[]>([]);
+    const [registryStatus, setRegistryStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
+    const [registryError, setRegistryError] = useState('');
+    const [installingID, setInstallingID] = useState<string>();
+    const [installError, setInstallError] = useState<{id: string; message: string}>();
 
-    return <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    // Local skills filter as you type; skills.sh is queried once typing pauses, and
+    // a response for an older query is ignored.
+    useEffect(() => {
+        if (!searchesRegistry) {
+            setRegistryResults([]);
+            setRegistryStatus('idle');
+            return;
+        }
+        let isCurrent = true;
+        setRegistryStatus('loading');
+        const timer = window.setTimeout(() => {
+            SearchRegistrySkills(search.trim())
+                .then((results) => {
+                    if (!isCurrent) return;
+                    setRegistryResults(results ?? []);
+                    setRegistryStatus('done');
+                })
+                .catch((error) => {
+                    if (!isCurrent) return;
+                    setRegistryError(error instanceof Error ? error.message : String(error));
+                    setRegistryStatus('error');
+                });
+        }, REGISTRY_SEARCH_DELAY_MS);
+        return () => {
+            isCurrent = false;
+            window.clearTimeout(timer);
+        };
+    }, [search, searchesRegistry]);
+
+    async function install(skill: domain.RegistrySkill) {
+        setInstallingID(skill.id);
+        setInstallError(undefined);
+        try {
+            await onInstallRegistry(skill);
+        } catch (error) {
+            setInstallError({id: skill.id, message: error instanceof Error ? error.message : String(error)});
+        } finally {
+            setInstallingID(undefined);
+        }
+    }
+
+    return <div className="modal-backdrop" role="presentation" onClick={() => { if (!installingID) onClose(); }}>
         <section className="skill-modal" role="dialog" aria-modal="true" aria-labelledby="add-skill-title" onClick={(event) => event.stopPropagation()}>
-            <div className="modal-heading"><h2 id="add-skill-title">Add skill to {target.name}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose}>×</button></div>
-            <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search skills by name or description" autoFocus/>
+            <div className="modal-heading"><h2 id="add-skill-title">Add skill to {target.name}</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={Boolean(installingID)}>×</button></div>
+            <input className="skill-search" value={search} onChange={(event) => onSearch(event.target.value)} placeholder="Search your skills, or type a name to search skills.sh" autoFocus/>
             <div className="modal-skill-list">
+                {searchesRegistry ? <h3 className="modal-skill-section">On this computer</h3> : null}
                 {availableSkills.map((skill) => {
                     const alreadyAdded = targetNames.has(skill.name.toLowerCase());
-                    return <article className="modal-skill-row" key={`${skill.id}-${skill.scopeId}`}><div><strong>{skill.name}</strong><p>{skill.description}</p><small>{skill.scopeId}</small></div><button type="button" disabled={alreadyAdded} onClick={() => onAdd(skill)}>{alreadyAdded ? 'Added' : 'Add'}</button></article>;
+                    return <article className="modal-skill-row" key={`${skill.id}-${skill.scopeId}`}><div><strong>{skill.name}</strong><p className="modal-skill-description" title={skill.description}>{skill.description}</p><small>{skill.scopeId}</small></div><button type="button" disabled={alreadyAdded} onClick={() => onAdd(skill)}>{alreadyAdded ? 'Added' : 'Add'}</button></article>;
                 })}
                 {!availableSkills.length ? <p className="empty-state">No skills match your search.</p> : null}
+                {searchesRegistry ? <>
+                    <h3 className="modal-skill-section">From skills.sh</h3>
+                    {registryStatus === 'loading' ? <p className="empty-state">Searching skills.sh...</p> : null}
+                    {registryStatus === 'error' ? <p className="empty-state registry-error">{registryError}</p> : null}
+                    {registryStatus === 'done' && !registryResults.length ? <p className="empty-state">No skills.sh results for “{search.trim()}”.</p> : null}
+                    {registryStatus === 'done' ? registryResults.map((skill) => {
+                        // A same-named folder already exists in the target, so installing would
+                        // be refused; it may be a different skill, hence not "Installed".
+                        const nameInUse = targetNames.has(skill.name.toLowerCase());
+                        const isInstalling = installingID === skill.id;
+                        return <article className="modal-skill-row" key={skill.id}>
+                            <div>
+                                <strong>{skill.name}</strong>
+                                <p><a href={skill.url} onClick={(event) => { event.preventDefault(); BrowserOpenURL(skill.url); }}>{skill.source}</a> · {formatInstalls(skill.installs)} installs</p>
+                                {installError?.id === skill.id ? <small className="registry-error">{installError.message}</small> : null}
+                            </div>
+                            <button type="button" disabled={nameInUse || Boolean(installingID)} title={nameInUse ? `${target.name} already has a skill named ${skill.name}` : undefined} onClick={() => void install(skill)}>{nameInUse ? 'Name in use' : isInstalling ? 'Installing...' : 'Install'}</button>
+                        </article>;
+                    }) : null}
+                </> : null}
             </div>
         </section>
     </div>;
+}
+
+function formatInstalls(installs: number) {
+    return new Intl.NumberFormat('en', {notation: 'compact', maximumFractionDigits: 1}).format(installs);
 }
 
 function InstallSkillDialog({url, targetID, scopes, isInstalling, onURLChange, onTargetChange, onSubmit, onClose}: {
@@ -473,7 +558,7 @@ function DeleteSkillDialog({skill, sharedWith, isDeleting, onDelete, onClose}: {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-heading"><h2 id="delete-skill-title">Delete {skill.name}?</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
-            {sharedWith.length ? <p>This file is shared by {sharedWith.map((scope) => scope.name).join(' and ')}, so it is removed from all of them. Copies elsewhere are not affected.</p> : <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>}
+            {skill.scopeId === 'global' ? <p>This is a Global skill, so it is removed from every agent, including the copy Agent Studio made for Claude Code. Skills an agent has on its own are not affected.</p> : sharedWith.length ? <p>This file is shared by {sharedWith.map((scope) => scope.name).join(' and ')}, so it is removed from all of them. Copies elsewhere are not affected.</p> : <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>}
             <code title={skill.path}>{skill.path}</code>
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button><button type="button" className="delete-confirm" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete skill'}</button></div>
         </section>

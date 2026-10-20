@@ -49,8 +49,21 @@ marked with a `.agent-studio-global` file:
 - deleting the global skill removes its marked copies;
 - invocation policies for a global skill are written only to installed agents'
   user-level configs;
+- a symlink in `~/.claude/skills` pointing at the global skill (what `npx skills`
+  creates) already gives Claude access, so it is kept instead of copied over, and
+  removed together with the global skill;
 - **Sync to agents** creates copies for skills placed in `~/.agents/skills` outside
-  Agent Studio, refreshes stale ones, and covers agents installed later.
+  Agent Studio, refreshes stale ones, covers agents installed later, and removes
+  marked copies (and links into `~/.agents/skills`) whose global skill was deleted
+  outside Agent Studio. Each marker records its source directory, so global skills
+  in nested folders are matched correctly.
+
+Executables are also searched in nvm (`~/.nvm/versions/node/*/bin`, newest first),
+pnpm, Yarn, asdf and mise directories. `--version` runs with the executable's own
+directory on `PATH` (so an npm shim finds the `node` next to it), times out after
+5 seconds even when a wrapper leaves a child process behind, and a failed run is
+cached for one minute only, so a slow first start is retried without a broken
+binary costing a timeout on every scan.
 
 ## Why only Claude gets a propagated copy
 
@@ -97,3 +110,14 @@ is the single place the propagation decision is encoded; the file-vs-folder
 If a future provider release changes any of this, re-verify against the installed
 CLI directly (there's usually a `debug` subcommand that dumps what it actually
 discovered) rather than trusting that provider's own docs alone.
+
+## skills.sh
+
+Search uses the same public endpoint as `npx skills find`:
+`GET https://skills.sh/api/search?q=<query>&limit=20` (queries shorter than two
+characters are rejected by the API, so they are not sent). Each result's `source`
+is a GitHub `owner/repository` slug and `skillId` the skill's registry slug;
+installing one is exactly `npx skills add https://github.com/<source> --skill <skillId>`
+through the existing installer (Git clone with ZIP fallback, slug resolution), so a
+Global install also reaches Claude Code. Both values are validated before a URL is
+built, and the query is the only data sent to skills.sh.

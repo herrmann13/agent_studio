@@ -16,7 +16,21 @@ const (
 	MAX_SCOPE_COLUMN_WIDTH  = 34
 	COLUMN_GAP              = "  "
 	ELLIPSIS                = "…"
+	// REGISTRY_VISIBLE_RESULTS keeps the skills.sh list from pushing the panels off screen.
+	REGISTRY_VISIBLE_RESULTS = 8
 )
+
+// compactCount renders install counts as 1.4M / 61.4K / 950.
+func compactCount(value int) string {
+	switch {
+	case value >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(value)/1_000_000)
+	case value >= 1_000:
+		return fmt.Sprintf("%.1fK", float64(value)/1_000)
+	default:
+		return fmt.Sprint(value)
+	}
+}
 
 // Estados presentes em quase toda skill só poluem a lista, então ficam apenas nos detalhes.
 var HIDDEN_LIST_STATES = map[string]bool{"available": true, "associated": true}
@@ -144,7 +158,14 @@ func (m *model) dialogLines() []styledLine {
 		for index, mode := range invocationModes() {
 			lines = append(lines, selectableLine(mode, index == m.dialogIndex, true))
 		}
-	case dialogCopy, dialogInstallTo:
+	case dialogRegistryResults:
+		start, end := listWindow(m.dialogIndex, len(m.registry), REGISTRY_VISIBLE_RESULTS)
+		for index := start; index < end; index++ {
+			skill := m.registry[index]
+			label := fmt.Sprintf("%s · %s · %s installs", skill.Name, skill.Source, compactCount(skill.Installs))
+			lines = append(lines, selectableLine(label, index == m.dialogIndex, true))
+		}
+	case dialogCopy, dialogInstallTo, dialogRegistryTarget:
 		for index, scope := range m.workspace.Scopes {
 			lines = append(lines, selectableLine(scope.Name, index == m.dialogIndex, true))
 		}
@@ -152,15 +173,18 @@ func (m *model) dialogLines() []styledLine {
 		if skill := m.selectedSkill(); skill != nil {
 			lines = append(lines, styledLine{text: "Delete \"" + skill.Name + "\" permanently? [y/N]", style: errorColor})
 		}
-	case dialogProject, dialogInstallURL:
+	case dialogProject, dialogInstallURL, dialogRegistrySearch:
 		lines = append(lines, styledLine{text: "> " + m.input + "_", style: selectedColor})
 	}
 	return lines
 }
 
 func (m *model) footerLine() styledLine {
+	if m.busy != "" {
+		return styledLine{text: "working · input paused · ctrl+c quit", style: mutedColor}
+	}
 	if m.dialog == dialogNone {
-		return styledLine{text: "tab panel · ↑↓ move · m mode · c copy · d delete · i install · p/P add/remove project · r refresh · q quit", style: mutedColor}
+		return styledLine{text: "tab panel · ↑↓ move · m mode · c copy · d delete · i install · s search skills.sh · p/P add/remove project · r refresh · q quit", style: mutedColor}
 	}
 	if m.dialog == dialogDelete {
 		return styledLine{text: "y confirm · n/esc cancel", style: mutedColor}
@@ -229,6 +253,12 @@ func dialogTitle(value dialog) string {
 		return "Install skill URL or npx command"
 	case dialogInstallTo:
 		return "Install into scope"
+	case dialogRegistrySearch:
+		return "Search skills.sh"
+	case dialogRegistryResults:
+		return "skills.sh results"
+	case dialogRegistryTarget:
+		return "Install skills.sh result into scope"
 	default:
 		return ""
 	}

@@ -32,3 +32,11 @@ func TestInvocationModeIndex(t *testing.T) {
 		t.Errorf("invocationModeIndex(unknown) = %d, want 0", got)
 	}
 }
+
+func TestCompactCount(t *testing.T) {
+	for value, want := range map[int]string{950: "950", 61376: "61.4K", 1393052: "1.4M"} {
+		if got := compactCount(value); got != want {
+			t.Errorf("compactCount(%d) = %q, want %q", value, got, want)
+		}
+	}
+}

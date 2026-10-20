@@ -166,3 +166,35 @@ func TestCopyLooseOpenCodeV2SkillCreatesSkillFolder(t *testing.T) {
 		t.Fatalf("copied skill folder missing: %v", err)
 	}
 }
+
+func TestUnreadableSkillPathsDoNotBreakDiscovery(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(home, ".config", "opencode")
+	writeFixture(t, filepath.Join(config, "skills", "readable", "SKILL.md"), "---\nname: readable\n---\n")
+	// `skill` exists as a file instead of a directory.
+	writeFixture(t, filepath.Join(config, "skill"), "not a directory")
+	locked := filepath.Join(config, "skills", "locked")
+	writeFixture(t, filepath.Join(locked, "inner", "SKILL.md"), "---\nname: inner\n---\n")
+	claudeLocked := filepath.Join(home, ".claude", "skills", "locked")
+	writeFixture(t, filepath.Join(claudeLocked, "inner", "SKILL.md"), "---\nname: inner\n---\n")
+	writeFixture(t, filepath.Join(home, ".claude", "skills", "visible", "SKILL.md"), "---\nname: visible\n---\n")
+	for _, directory := range []string{locked, claudeLocked} {
+		if err := os.Chmod(directory, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { os.Chmod(directory, 0o755) })
+	}
+	service := NewDiscoveryServiceWithEnvironment(fakeEnvironment(home, map[string]string{"opencode": "opencode v2.1.0", "claude": "2.1.0"}))
+
+	result, err := service.Discover()
+	if err != nil {
+		t.Fatalf("Discover() error = %v", err)
+	}
+	names := map[string]bool{}
+	for _, skill := range result.Skills {
+		names[skill.Name] = true
+	}
+	if !names["readable"] || !names["visible"] {
+		t.Fatalf("readable skills missing: %v", names)
+	}
+}

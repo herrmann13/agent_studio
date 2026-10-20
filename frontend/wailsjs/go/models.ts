@@ -145,6 +145,28 @@ export namespace domain {
 		}
 	}
 	
+	export class RegistrySkill {
+	    id: string;
+	    name: string;
+	    source: string;
+	    skillId: string;
+	    installs: number;
+	    url: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RegistrySkill(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.source = source["source"];
+	        this.skillId = source["skillId"];
+	        this.installs = source["installs"];
+	        this.url = source["url"];
+	    }
+	}
 	
 	
 	export class SkillInstallResult {

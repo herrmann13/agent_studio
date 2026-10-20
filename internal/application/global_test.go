@@ -116,3 +116,138 @@ func TestSyncGlobalSkillsCopiesSkillsPlacedOutsideAgentStudio(t *testing.T) {
 		t.Fatalf("Claude's own skill was overwritten")
 	}
 }
+
+func TestGlobalSkillAcceptsNpxSkillsSymlinkInClaude(t *testing.T) {
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".agents", "skills", "linked")
+	writeFixture(t, filepath.Join(globalDir, "SKILL.md"), "---\nname: linked\n---\n")
+	link := filepath.Join(home, ".claude", "skills", "linked")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(globalDir, link); err != nil {
+		t.Fatal(err)
+	}
+	service := newTestService(home)
+
+	if _, err := service.SyncGlobalSkills(); err != nil {
+		t.Fatalf("SyncGlobalSkills() error = %v, want the symlink accepted", err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink should be left in place: %v", err)
+	}
+
+	if _, err := service.DeleteSkill(filepath.Join(globalDir, "SKILL.md")); err != nil {
+		t.Fatalf("DeleteSkill() error = %v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("symlink to the deleted global skill should be removed: %v", err)
+	}
+}
+
+func TestGlobalSkillRefusesSymlinkToAnotherSkill(t *testing.T) {
+	home := t.TempDir()
+	writeFixture(t, filepath.Join(home, ".agents", "skills", "testing", "SKILL.md"), "---\nname: testing\n---\n")
+	other := filepath.Join(home, "elsewhere", "testing")
+	writeFixture(t, filepath.Join(other, "SKILL.md"), "---\nname: testing\n---\nOther.\n")
+	if err := os.MkdirAll(filepath.Join(home, ".claude", "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(other, filepath.Join(home, ".claude", "skills", "testing")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := newTestService(home).SyncGlobalSkills(); err == nil || !strings.Contains(err.Error(), "already contains its own") {
+		t.Fatalf("SyncGlobalSkills() error = %v, want refusal", err)
+	}
+	if content, _ := os.ReadFile(filepath.Join(other, "SKILL.md")); !strings.Contains(string(content), "Other.") {
+		t.Fatalf("linked skill was modified: %s", content)
+	}
+}
+
+func TestSyncGlobalSkillsRemovesOrphanedCopies(t *testing.T) {
+	home := t.TempDir()
+	service := newTestService(home)
+	globalSkill := filepath.Join(home, ".agents", "skills", "gone", "SKILL.md")
+	writeFixture(t, globalSkill, "---\nname: gone\n---\n")
+	if _, err := service.SyncGlobalSkills(); err != nil {
+		t.Fatalf("SyncGlobalSkills() error = %v", err)
+	}
+	claudeCopy := filepath.Join(home, ".claude", "skills", "gone")
+	if !isGlobalCopy(claudeCopy) {
+		t.Fatalf("Claude copy was not created")
+	}
+	ownSkill := filepath.Join(home, ".claude", "skills", "own", "SKILL.md")
+	writeFixture(t, ownSkill, "---\nname: own\n---\n")
+
+	// Removed outside Agent Studio, e.g. by `npx skills remove`.
+	if err := os.RemoveAll(filepath.Dir(globalSkill)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.SyncGlobalSkills(); err != nil {
+		t.Fatalf("SyncGlobalSkills() error = %v", err)
+	}
+	if _, err := os.Stat(claudeCopy); !os.IsNotExist(err) {
+		t.Fatalf("orphaned Claude copy should be removed: %v", err)
+	}
+	if _, err := os.Stat(ownSkill); err != nil {
+		t.Fatalf("Claude's own skill must be kept: %v", err)
+	}
+}
+
+func TestNestedGlobalSkillCopyIsNotTreatedAsOrphan(t *testing.T) {
+	home := t.TempDir()
+	service := newTestService(home)
+	nested := filepath.Join(home, ".agents", "skills", "team", "foo", "SKILL.md")
+	writeFixture(t, nested, "---\nname: foo\n---\n")
+	if _, err := service.SyncGlobalSkills(); err != nil {
+		t.Fatalf("SyncGlobalSkills() error = %v", err)
+	}
+	claudeCopy := filepath.Join(home, ".claude", "skills", "foo")
+	if !isGlobalCopy(claudeCopy) {
+		t.Fatalf("nested global skill was not copied to Claude Code")
+	}
+	if err := service.removeOrphanedGlobalCopies(); err != nil {
+		t.Fatal(err)
+	}
+	if !isGlobalCopy(claudeCopy) {
+		t.Fatalf("copy of a nested global skill was removed as an orphan")
+	}
+
+	if _, err := service.DeleteSkill(nested); err != nil {
+		t.Fatalf("DeleteSkill() error = %v", err)
+	}
+	if _, err := os.Stat(claudeCopy); !os.IsNotExist(err) {
+		t.Fatalf("copy of the deleted nested skill should be removed: %v", err)
+	}
+}
+
+func TestSyncGlobalSkillsRemovesDanglingLinksIntoGlobal(t *testing.T) {
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".agents", "skills", "linked")
+	writeFixture(t, filepath.Join(globalDir, "SKILL.md"), "---\nname: linked\n---\n")
+	claudeRoot := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(claudeRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(globalDir, filepath.Join(claudeRoot, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	// A link the user made to somewhere else must survive even when dangling.
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "mine"), filepath.Join(claudeRoot, "mine")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(globalDir); err != nil { // removed outside Agent Studio
+		t.Fatal(err)
+	}
+
+	if _, err := newTestService(home).SyncGlobalSkills(); err != nil {
+		t.Fatalf("SyncGlobalSkills() error = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(claudeRoot, "linked")); !os.IsNotExist(err) {
+		t.Fatalf("dangling link into ~/.agents/skills should be removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(claudeRoot, "mine")); err != nil {
+		t.Fatalf("unrelated link was removed: %v", err)
+	}
+}

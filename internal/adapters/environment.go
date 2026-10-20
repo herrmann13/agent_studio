@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -54,18 +56,49 @@ func commandDirectories(home string) []string {
 			filepath.Join(home, "AppData", "Roaming", "npm"),
 		}
 	}
-	return []string{
+	directories := []string{
 		filepath.Join(home, ".local", "bin"),
 		filepath.Join(home, ".opencode", "bin"),
 		filepath.Join(home, ".claude", "local"),
 		filepath.Join(home, ".bun", "bin"),
 		filepath.Join(home, ".npm-global", "bin"),
 		filepath.Join(home, ".volta", "bin"),
+		filepath.Join(home, ".yarn", "bin"),
+		filepath.Join(home, "Library", "pnpm"),
+		filepath.Join(home, ".local", "share", "pnpm"),
+		filepath.Join(home, ".asdf", "shims"),
+		filepath.Join(home, ".local", "share", "mise", "shims"),
 		filepath.Join(home, "go", "bin"),
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		"/usr/bin",
 	}
+	// npm global installs under nvm live in one bin directory per Node version;
+	// the newest version is searched first.
+	if nvmBins, err := filepath.Glob(filepath.Join(home, ".nvm", "versions", "node", "*", "bin")); err == nil {
+		sortNewestNodeFirst(nvmBins)
+		directories = append(directories, nvmBins...)
+	}
+	return append(directories, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin")
+}
+
+// sortNewestNodeFirst orders `.../node/vX.Y.Z/bin` paths by numeric version, so
+// v20 comes before v9 (a plain string sort would not).
+func sortNewestNodeFirst(bins []string) {
+	version := func(bin string) [3]int {
+		var parts [3]int
+		fields := strings.SplitN(strings.TrimPrefix(filepath.Base(filepath.Dir(bin)), "v"), ".", 3)
+		for index, field := range fields {
+			parts[index], _ = strconv.Atoi(field)
+		}
+		return parts
+	}
+	sort.SliceStable(bins, func(i, j int) bool {
+		a, b := version(bins[i]), version(bins[j])
+		for index := range a {
+			if a[index] != b[index] {
+				return a[index] > b[index]
+			}
+		}
+		return false
+	})
 }
 
 func findCommands(home string, names []string) []string {
@@ -119,13 +152,26 @@ type versionCacheKey struct {
 	modTime time.Time
 }
 
+type versionCacheEntry struct {
+	version string
+	// failedAt is set when `--version` failed; the failure is reused only until
+	// versionFailureTTL passes, so a slow first start is retried but a broken
+	// binary does not cost a timeout on every discovery.
+	failedAt time.Time
+}
+
+const versionFailureTTL = time.Minute
+
 var (
 	versionCacheMu sync.Mutex
-	versionCache   = map[versionCacheKey]string{}
+	versionCache   = map[versionCacheKey]versionCacheEntry{}
+	// now is replaced in tests to expire cached failures.
+	now = time.Now
 )
 
 // cachedCommandVersion runs `<path> --version` once per binary build. Discovery
 // runs after every UI action, so the result is reused until the file changes.
+// A failed or timed-out run is cached only briefly (see versionFailureTTL).
 func cachedCommandVersion(path string) string {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -135,20 +181,28 @@ func cachedCommandVersion(path string) string {
 	versionCacheMu.Lock()
 	cached, ok := versionCache[key]
 	versionCacheMu.Unlock()
-	if ok {
-		return cached
+	if ok && (cached.failedAt.IsZero() || now().Sub(cached.failedAt) < versionFailureTTL) {
+		return cached.version
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	output, err := exec.CommandContext(ctx, path, "--version").Output()
-	version := ""
-	if err == nil {
-		version = string(output)
+	command := exec.CommandContext(ctx, path, "--version")
+	// A wrapper (npm/bun shim) may leave a child holding stdout after the
+	// timeout kills it; WaitDelay stops Output from waiting on that pipe forever.
+	command.WaitDelay = time.Second
+	// npm shims start with `#!/usr/bin/env node`; under nvm, node sits next to
+	// the shim, which a GUI app's PATH does not include.
+	command.Env = append(os.Environ(), "PATH="+filepath.Dir(path)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	entry := versionCacheEntry{}
+	if output, err := command.Output(); err == nil {
+		entry.version = string(output)
+	} else {
+		entry.failedAt = now()
 	}
 	versionCacheMu.Lock()
-	versionCache[key] = version
+	versionCache[key] = entry
 	versionCacheMu.Unlock()
-	return version
+	return entry.version
 }
 
 var semverPattern = regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)

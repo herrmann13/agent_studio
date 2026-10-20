@@ -71,6 +71,16 @@ type DiscoveryResult struct {
 	ScannedAt   string       `json:"scannedAt"`
 }
 
+// RegistrySkill is a search result from the public skills.sh directory.
+type RegistrySkill struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Source   string `json:"source"`
+	SkillID  string `json:"skillId"`
+	Installs int    `json:"installs"`
+	URL      string `json:"url"`
+}
+
 // SkillInstallResult reports how a skill installed from a repository URL was fetched.
 type SkillInstallResult struct {
 	Workspace DiscoveryResult `json:"workspace"`

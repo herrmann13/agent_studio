@@ -17,9 +17,13 @@ export function DiscoverLocalEnvironment():Promise<domain.DiscoveryResult>;
 
 export function DownloadAndInstallUpdate(arg1:string):Promise<void>;
 
+export function InstallRegistrySkill(arg1:string,arg2:string,arg3:string):Promise<domain.SkillInstallResult>;
+
 export function InstallSkillFromURL(arg1:string,arg2:string):Promise<domain.SkillInstallResult>;
 
 export function RemoveProject(arg1:string):Promise<domain.DiscoveryResult>;
+
+export function SearchRegistrySkills(arg1:string):Promise<Array<domain.RegistrySkill>>;
 
 export function SelectProjectFolder():Promise<string>;
 

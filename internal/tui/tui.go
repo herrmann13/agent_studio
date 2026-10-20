@@ -34,6 +34,10 @@ const (
 	dialogProject    dialog = "project"
 	dialogInstallURL dialog = "install-url"
 	dialogInstallTo  dialog = "install-target"
+	// skills.sh search: type a query, pick a result, then pick the scope.
+	dialogRegistrySearch  dialog = "registry-search"
+	dialogRegistryResults dialog = "registry-results"
+	dialogRegistryTarget  dialog = "registry-target"
 )
 
 type terminal struct {
@@ -74,8 +78,20 @@ type model struct {
 	dialogIndex    int
 	input          string
 	installURL     string
+	registry       []domain.RegistrySkill
+	registryChoice int
 	message        string
 	messageIsError bool
+	// busy is set while network work (skills.sh search, installs) runs in the
+	// background; keys are ignored meanwhile so a stray Enter cannot act on stale
+	// results. The finished work is applied on the main loop through done.
+	busy string
+	done chan func(*model)
+}
+
+type keyEvent struct {
+	key string
+	err error
 }
 
 func Run() error {
@@ -94,21 +110,51 @@ func Run() error {
 	defer terminal.restore()
 	fmt.Print(escapeSequence + "[?1049h" + escapeSequence + "[?25l")
 
-	app := model{service: service, workspace: workspace, focusScopes: true}
-	reader := bufio.NewReader(os.Stdin)
+	app := model{service: service, workspace: workspace, focusScopes: true, done: make(chan func(*model))}
+	keys := make(chan keyEvent)
+	go func() {
+		reader := bufio.NewReader(os.Stdin)
+		for {
+			key, err := readKey(reader)
+			keys <- keyEvent{key: key, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	for {
 		app.render()
-		key, err := readKey(reader)
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if app.handleKey(key) {
-			return nil
+		select {
+		case event := <-keys:
+			if event.err == io.EOF {
+				return nil
+			}
+			if event.err != nil {
+				return event.err
+			}
+			if app.busy != "" {
+				if event.key == "\x03" {
+					return nil
+				}
+				continue
+			}
+			if app.handleKey(event.key) {
+				return nil
+			}
+		case apply := <-app.done:
+			app.busy = ""
+			apply(&app)
 		}
 	}
+}
+
+// runInBackground shows status, runs work off the main loop, and applies the
+// closure it returns once finished. work must not touch the model directly.
+func (m *model) runInBackground(status string, work func() func(*model)) {
+	m.busy = status
+	m.setMessage(status)
+	done := m.done
+	go func() { done <- work() }()
 }
 
 func readKey(reader *bufio.Reader) (string, error) {
@@ -186,16 +232,20 @@ func (m *model) handleKey(key string) bool {
 		if m.selectedScope() != nil {
 			m.dialog, m.input = dialogInstallURL, ""
 		}
+	case "s":
+		if m.selectedScope() != nil {
+			m.dialog, m.input = dialogRegistrySearch, ""
+		}
 	}
 	return false
 }
 
 func (m *model) handleDialogKey(key string) {
 	if key == "esc" {
-		m.dialog, m.input = dialogNone, ""
+		m.dialog, m.input, m.registry, m.registryChoice = dialogNone, "", nil, 0
 		return
 	}
-	if m.dialog == dialogProject || m.dialog == dialogInstallURL {
+	if m.dialog == dialogProject || m.dialog == dialogInstallURL || m.dialog == dialogRegistrySearch {
 		if key == "\r" || key == "\n" {
 			m.submitInput()
 			return
@@ -255,6 +305,28 @@ func (m *model) submitInput() {
 			return
 		}
 		m.installURL, m.dialog, m.dialogIndex = m.input, dialogInstallTo, m.scopeIndex
+	case dialogRegistrySearch:
+		query := strings.TrimSpace(m.input)
+		if len([]rune(query)) < 2 {
+			m.setError("Type at least 2 characters to search skills.sh.")
+			return
+		}
+		service := m.service
+		m.runInBackground("Searching skills.sh for \""+query+"\"...", func() func(*model) {
+			results, err := service.SearchRegistrySkills(query)
+			return func(m *model) {
+				if err != nil {
+					m.setError(err.Error())
+					return
+				}
+				if len(results) == 0 {
+					m.setError("No skills.sh results for \"" + query + "\".")
+					return
+				}
+				m.registry, m.dialog, m.dialogIndex = results, dialogRegistryResults, 0
+				m.setMessage(fmt.Sprintf("%d skills.sh results for \"%s\".", len(results), query))
+			}
+		})
 	}
 }
 
@@ -284,13 +356,41 @@ func (m *model) submitDialog() {
 		if len(m.workspace.Scopes) == 0 {
 			return
 		}
-		result, err := m.service.InstallSkillFromURL(m.installURL, m.workspace.Scopes[m.dialogIndex].ID)
-		if err != nil {
-			m.setError(err.Error())
+		service, installURL, targetID := m.service, m.installURL, m.workspace.Scopes[m.dialogIndex].ID
+		m.runInBackground("Installing skill...", func() func(*model) {
+			result, err := service.InstallSkillFromURL(installURL, targetID)
+			return func(m *model) {
+				if err != nil {
+					m.setError(err.Error())
+					return
+				}
+				m.workspace, m.dialog, m.installURL = result.Workspace, dialogNone, ""
+				m.normalizeSelection()
+				m.setMessage("Skill installed via " + result.Method + ".")
+			}
+		})
+	case dialogRegistryResults:
+		if len(m.registry) == 0 {
 			return
 		}
-		m.workspace, m.dialog, m.installURL = result.Workspace, dialogNone, ""
-		m.setMessage("Skill installed via " + result.Method + ".")
+		m.registryChoice, m.dialog, m.dialogIndex = m.dialogIndex, dialogRegistryTarget, m.scopeIndex
+	case dialogRegistryTarget:
+		if len(m.workspace.Scopes) == 0 || m.registryChoice >= len(m.registry) {
+			return
+		}
+		service, skill, target := m.service, m.registry[m.registryChoice], m.workspace.Scopes[m.dialogIndex]
+		m.runInBackground("Installing "+skill.Name+" from skills.sh...", func() func(*model) {
+			result, err := service.InstallRegistrySkill(skill.Source, skill.SkillID, target.ID)
+			return func(m *model) {
+				if err != nil {
+					m.setError(err.Error())
+					return
+				}
+				m.workspace, m.dialog, m.registry, m.registryChoice = result.Workspace, dialogNone, nil, 0
+				m.normalizeSelection()
+				m.setMessage(skill.Name + " from skills.sh installed into " + target.Name + " via " + result.Method + ".")
+			}
+		})
 	}
 }
 
@@ -340,8 +440,10 @@ func (m *model) moveDialogSelection(offset int) {
 	switch m.dialog {
 	case dialogMode:
 		limit = len(invocationModes())
-	case dialogCopy, dialogInstallTo:
+	case dialogCopy, dialogInstallTo, dialogRegistryTarget:
 		limit = len(m.workspace.Scopes)
+	case dialogRegistryResults:
+		limit = len(m.registry)
 	}
 	m.dialogIndex = boundedIndex(m.dialogIndex+offset, limit)
 }
