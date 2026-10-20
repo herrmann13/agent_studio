@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,12 +29,19 @@ import (
 // configs. mu serializes every public operation so state changes stay consistent.
 type DiscoveryService struct {
 	home     string
+	env      adapters.Environment
 	adapters []adapters.Adapter
 	mu       sync.Mutex
 }
 
 func NewDiscoveryService(home string) *DiscoveryService {
-	return &DiscoveryService{home: home, adapters: []adapters.Adapter{opencode.Adapter{}, claude.Adapter{}, codex.Adapter{}}}
+	return NewDiscoveryServiceWithEnvironment(adapters.SystemEnvironment(home))
+}
+
+// NewDiscoveryServiceWithEnvironment builds a service over a custom view of the
+// machine, so tests control which agents appear installed.
+func NewDiscoveryServiceWithEnvironment(env adapters.Environment) *DiscoveryService {
+	return &DiscoveryService{home: env.Home, env: env, adapters: []adapters.Adapter{opencode.Adapter{}, claude.Adapter{}, codex.Adapter{}}}
 }
 
 func DefaultDiscoveryService() (*DiscoveryService, error) {
@@ -64,20 +72,22 @@ func (s *DiscoveryService) discover() (domain.DiscoveryResult, error) {
 		ScannedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 	result.Projects = s.loadProjects()
+	// Every supported agent reads `~/.agents/skills` natively except Claude Code,
+	// which receives a marked copy (see skill_propagation.go).
+	result.Scopes = append(result.Scopes, domain.Scope{
+		ID: "global", Name: "Global (all agents)", Kind: "global", Root: s.globalSkillRoot(),
+	})
 
+	// Only installed agents are listed; an agent whose executable is missing
+	// contributes no scope even if its config directory is still on disk.
 	for _, adapter := range s.adapters {
-		agent, config := adapter.Detect(s.home)
-		result.Agents = append(result.Agents, agent)
-		if config != nil {
-			result.ConfigFiles = append(result.ConfigFiles, *config)
+		for _, installation := range adapter.Detect(s.env) {
+			result.Agents = append(result.Agents, installation.Agent)
+			if installation.Config != nil {
+				result.ConfigFiles = append(result.ConfigFiles, *installation.Config)
+			}
+			result.Scopes = append(result.Scopes, installation.Scope)
 		}
-		roots := adapter.SkillRoots(s.home)
-		if len(roots) == 0 {
-			continue
-		}
-		result.Scopes = append(result.Scopes, domain.Scope{
-			ID: string(agent.Provider), Name: agent.Name, Kind: "agent", Provider: agent.Provider, Root: roots[0],
-		})
 	}
 
 	for _, project := range result.Projects {
@@ -151,7 +161,7 @@ func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domai
 	policy := previous
 	policy.Mode = mode
 	policies[skill.Path] = policy
-	for _, provider := range providersForScope(scope) {
+	for _, provider := range s.providersForScope(scope) {
 		if err := s.syncSkillPolicy(skill, scope, provider, mode, &policy); err != nil {
 			return domain.DiscoveryResult{}, err
 		}
@@ -163,9 +173,20 @@ func (s *DiscoveryService) SetSkillInvocationMode(skillPath, mode string) (domai
 	return s.discover()
 }
 
-func providersForScope(scope domain.Scope) []domain.Provider {
+func (s *DiscoveryService) providersForScope(scope domain.Scope) []domain.Provider {
 	if scope.Provider != "" {
 		return []domain.Provider{scope.Provider}
+	}
+	if scope.Kind == "global" {
+		// A global skill only configures the agents that are actually installed,
+		// writing their user-level policy files (never a project's).
+		var providers []domain.Provider
+		for _, adapter := range s.adapters {
+			if len(adapter.Detect(s.env)) > 0 {
+				providers = append(providers, adapter.Provider())
+			}
+		}
+		return providers
 	}
 	if scope.Kind == "project" {
 		return []domain.Provider{domain.ProviderOpenCode, domain.ProviderClaude, domain.ProviderCodex}
@@ -215,14 +236,22 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 	if source.ScopeID == target.ID {
 		return domain.DiscoveryResult{}, fmt.Errorf("skill is already in this location")
 	}
-	sourceDir := filepath.Dir(source.Path)
-	destinationDir := filepath.Join(target.Root, filepath.Base(sourceDir))
+	destinationDir := filepath.Join(target.Root, skillDirName(source.Path))
 	if _, err := os.Stat(destinationDir); err == nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("destination already contains %q", source.Name)
 	} else if !os.IsNotExist(err) {
 		return domain.DiscoveryResult{}, fmt.Errorf("inspect destination: %w", err)
 	}
-	if err := copyDirectory(sourceDir, destinationDir); err != nil {
+	if err := s.checkGlobalCopyTargets(target, filepath.Base(destinationDir)); err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	if isSingleFileSkill(source.Path) {
+		// Other agents only understand `<name>/SKILL.md`, so a loose OpenCode v2
+		// skill file becomes a regular skill folder at its destination.
+		if err := copySingleFileSkill(source.Path, destinationDir); err != nil {
+			return domain.DiscoveryResult{}, err
+		}
+	} else if err := copyDirectory(filepath.Dir(source.Path), destinationDir); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
 	if err := removeManagedCodexMetadata(destinationDir); err != nil {
@@ -232,6 +261,36 @@ func (s *DiscoveryService) CopySkill(skillPath, targetScopeID string) (domain.Di
 		return domain.DiscoveryResult{}, err
 	}
 	return s.discover()
+}
+
+// SyncGlobalSkills gives every installed agent that cannot read `~/.agents/skills`
+// its marked copy of each Global skill, refreshing stale copies. It covers skills
+// placed there outside Agent Studio and agents installed after a skill was added.
+// A name already taken by an agent's own skill is skipped and reported.
+func (s *DiscoveryService) SyncGlobalSkills() (domain.DiscoveryResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	workspace, err := s.discover()
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	var skipped []string
+	for _, skill := range workspace.Skills {
+		if skill.ScopeID != "global" {
+			continue
+		}
+		if err := s.propagateToGlobalAgents(filepath.Dir(skill.Path)); err != nil {
+			skipped = append(skipped, err.Error())
+		}
+	}
+	updated, err := s.discover()
+	if err != nil {
+		return domain.DiscoveryResult{}, err
+	}
+	if len(skipped) > 0 {
+		return updated, fmt.Errorf("some global skills were not synced: %s", strings.Join(skipped, "; "))
+	}
+	return updated, nil
 }
 
 // DeleteSkill permanently removes the selected skill directory. The caller must confirm this action.
@@ -253,20 +312,28 @@ func (s *DiscoveryService) DeleteSkill(skillPath string) (domain.DiscoveryResult
 	if err := s.removeSkillPolicy(skill, scope); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
-	sourceDir := filepath.Dir(skill.Path)
-	if err := os.RemoveAll(sourceDir); err != nil {
+	// A loose OpenCode v2 skill file sits directly in the scope root, so only the
+	// file itself may be removed -- never its parent directory.
+	if isSingleFileSkill(skill.Path) {
+		if err := os.Remove(skill.Path); err != nil {
+			return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
+		}
+	} else if err := os.RemoveAll(filepath.Dir(skill.Path)); err != nil {
 		return domain.DiscoveryResult{}, fmt.Errorf("delete skill: %w", err)
 	}
-	if err := s.removePropagatedCopiesForScope(scope, filepath.Base(sourceDir)); err != nil {
+	if err := s.removePropagatedCopiesForScope(scope, skillDirName(skill.Path)); err != nil {
 		return domain.DiscoveryResult{}, err
 	}
 	return s.discover()
 }
 
-// propagateSkillCopy fans a project scope's canonical skill copy out to every
-// agent's native skill location for that project, so it is discoverable without
-// depending on Agent Studio's own scope directory.
+// propagateSkillCopy fans a project or global scope's canonical skill copy out to
+// every agent that cannot read `.agents/skills` natively, so it is discoverable
+// without depending on Agent Studio's own scope directory.
 func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir string) error {
+	if scope.Kind == "global" {
+		return s.propagateToGlobalAgents(skillDir)
+	}
 	if scope.Kind != "project" {
 		return nil
 	}
@@ -274,6 +341,9 @@ func (s *DiscoveryService) propagateSkillCopy(scope domain.Scope, skillDir strin
 }
 
 func (s *DiscoveryService) removePropagatedCopiesForScope(scope domain.Scope, skillDirName string) error {
+	if scope.Kind == "global" {
+		return s.removeGlobalCopies(skillDirName)
+	}
 	if scope.Kind != "project" {
 		return nil
 	}
@@ -286,7 +356,7 @@ func (s *DiscoveryService) removeSkillPolicy(skill domain.Skill, scope domain.Sc
 	if !exists {
 		return nil
 	}
-	for _, provider := range providersForScope(scope) {
+	for _, provider := range s.providersForScope(scope) {
 		if err := s.syncSkillPolicy(skill, scope, provider, modeAutomatic, &policy); err != nil {
 			return err
 		}
@@ -309,34 +379,148 @@ func (s *DiscoveryService) skillFromWorkspace(workspace domain.DiscoveryResult, 
 }
 
 func discoverSkills(scope domain.Scope) ([]domain.Skill, error) {
-	info, err := os.Stat(scope.Root)
-	if os.IsNotExist(err) {
-		return nil, nil
+	var paths []string
+	var err error
+	if scope.SkillLayout == domain.SkillLayoutOpenCodeV2 {
+		paths, err = scanOpenCodeV2Skills(scope.Root)
+	} else {
+		paths, err = scanSkillFolders(scope.Root)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("inspect skill directory %q: %w", scope.Root, err)
+		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, nil
-	}
-	var skills []domain.Skill
-	err = filepath.WalkDir(scope.Root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || entry.Name() != "SKILL.md" {
-			return nil
+	skills := make([]domain.Skill, 0, len(paths))
+	for _, path := range paths {
+		if !isSingleFileSkill(path) && isGlobalCopy(filepath.Dir(path)) {
+			continue
 		}
 		skill, err := parseSkill(path)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		skill.ScopeID = scope.ID
 		skill.States = []string{"available", "associated"}
 		skills = append(skills, skill)
+	}
+	return skills, nil
+}
+
+// scanSkillFolders finds every `SKILL.md` below root.
+func scanSkillFolders(root string) ([]string, error) {
+	info, err := os.Stat(root)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("inspect skill directory %q: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil, nil
+	}
+	var paths []string
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && entry.Name() == "SKILL.md" {
+			paths = append(paths, path)
+		}
 		return nil
 	})
-	return skills, err
+	return paths, err
+}
+
+// openCodeV2MaxDepth mirrors OpenCode v2's skill scanner, which stops descending
+// six directories below a skill root.
+const openCodeV2MaxDepth = 6
+
+// scanOpenCodeV2Skills reproduces how OpenCode v2 identifies skills (confirmed
+// against the 2.1.0 CLI's `GET /api/skill`): it reads both `skills` and its
+// sibling `skill` directory; a folder containing `SKILL.md` is one skill and is not
+// descended into; a loose `<name>.md` directly in a root is also a skill; hidden
+// entries are ignored; and symlinks are followed.
+func scanOpenCodeV2Skills(root string) ([]string, error) {
+	var paths []string
+	for _, base := range []string{root, filepath.Join(filepath.Dir(root), "skill")} {
+		type pending struct {
+			directory string
+			depth     int
+		}
+		queue := []pending{{directory: base}}
+		for len(queue) > 0 {
+			current := queue[0]
+			queue = queue[1:]
+			entries, err := os.ReadDir(current.directory)
+			if os.IsNotExist(err) {
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("inspect skill directory %q: %w", current.directory, err)
+			}
+			var files, directories []string
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Name(), ".") || entry.Name() == "node_modules" {
+					continue
+				}
+				path := filepath.Join(current.directory, entry.Name())
+				info, err := os.Stat(path)
+				if err != nil {
+					continue
+				}
+				if info.IsDir() {
+					directories = append(directories, path)
+				} else if info.Mode().IsRegular() {
+					files = append(files, path)
+				}
+			}
+			if skillFile := filepath.Join(current.directory, "SKILL.md"); slices.Contains(files, skillFile) {
+				paths = append(paths, skillFile)
+				continue
+			}
+			if current.depth == 0 {
+				for _, file := range files {
+					if strings.HasSuffix(file, ".md") {
+						paths = append(paths, file)
+					}
+				}
+			}
+			if current.depth < openCodeV2MaxDepth {
+				for _, directory := range directories {
+					queue = append(queue, pending{directory: directory, depth: current.depth + 1})
+				}
+			}
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// isSingleFileSkill reports an OpenCode v2 skill stored as a loose `<name>.md`.
+func isSingleFileSkill(path string) bool {
+	return filepath.Base(path) != "SKILL.md"
+}
+
+// skillDirName is the folder name a skill occupies, or would occupy once copied.
+func skillDirName(path string) string {
+	if isSingleFileSkill(path) {
+		return strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+	return filepath.Base(filepath.Dir(path))
+}
+
+func copySingleFileSkill(source, destinationDir string) error {
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	content, err := os.ReadFile(source)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(destinationDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(destinationDir, "SKILL.md"), content, info.Mode().Perm())
 }
 
 func parseSkill(path string) (domain.Skill, error) {
@@ -344,7 +528,7 @@ func parseSkill(path string) (domain.Skill, error) {
 	if err != nil {
 		return domain.Skill{}, fmt.Errorf("read skill %q: %w", path, err)
 	}
-	name := filepath.Base(filepath.Dir(path))
+	name := skillDirName(path)
 	description := "No description provided."
 	var firstContent string
 	metadataNameFound := false
@@ -391,7 +575,13 @@ func applySkillStates(skills []domain.Skill) {
 		byName[strings.ToLower(skill.Name)] = append(byName[strings.ToLower(skill.Name)], index)
 	}
 	for _, indices := range byName {
-		if len(indices) < 2 {
+		// Agents that share a skill directory (OpenCode v1 and v2) list the same
+		// file in each of their scopes; that is one copy, not a duplicate.
+		paths := make(map[string]bool)
+		for _, index := range indices {
+			paths[skills[index].Path] = true
+		}
+		if len(paths) < 2 {
 			continue
 		}
 		hashes := make(map[string]bool)

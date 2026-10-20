@@ -15,6 +15,89 @@ func projectRootFromScopeRoot(scopeRoot string) string {
 	return filepath.Dir(filepath.Dir(scopeRoot))
 }
 
+// globalCopyMarker marks a user-level copy that Agent Studio made from the Global
+// scope. Only marked copies are ever replaced or removed, and they are hidden from
+// that agent's own lane so the skill is listed once, under Global.
+const globalCopyMarker = ".agent-studio-global"
+
+func (s *DiscoveryService) globalSkillRoot() string {
+	return filepath.Join(s.home, ".agents", "skills")
+}
+
+// installedGlobalCopyRoots lists the user-level skill directories of installed
+// agents that cannot read `~/.agents/skills` themselves (today only Claude Code).
+func (s *DiscoveryService) installedGlobalCopyRoots() []string {
+	needsCopy := providersWithIndependentSkillCopy()
+	var roots []string
+	for _, adapter := range s.adapters {
+		if needsCopy[adapter.Provider()] && len(adapter.Detect(s.env)) > 0 {
+			roots = append(roots, adapter.UserSkillRoot(s.home))
+		}
+	}
+	return roots
+}
+
+// checkGlobalCopyTargets refuses before anything is written when an installed
+// agent already has its own, unmanaged skill with the same folder name.
+func (s *DiscoveryService) checkGlobalCopyTargets(scope domain.Scope, skillDirName string) error {
+	if scope.Kind != "global" {
+		return nil
+	}
+	for _, root := range s.installedGlobalCopyRoots() {
+		destination := filepath.Join(root, skillDirName)
+		if _, err := os.Stat(destination); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			return fmt.Errorf("inspect %s: %w", destination, err)
+		}
+		if !isGlobalCopy(destination) {
+			return fmt.Errorf("%s already contains its own %q skill; remove or rename it before making it global", root, skillDirName)
+		}
+	}
+	return nil
+}
+
+func (s *DiscoveryService) propagateToGlobalAgents(sourceDir string) error {
+	skillDirName := filepath.Base(sourceDir)
+	if err := s.checkGlobalCopyTargets(domain.Scope{Kind: "global"}, skillDirName); err != nil {
+		return err
+	}
+	for _, root := range s.installedGlobalCopyRoots() {
+		destination := filepath.Join(root, skillDirName)
+		if err := copyDirectoryForce(sourceDir, destination); err != nil {
+			return fmt.Errorf("propagate skill to %s: %w", root, err)
+		}
+		if err := os.WriteFile(filepath.Join(destination, globalCopyMarker), []byte("Managed by Agent Studio: copy of "+sourceDir+"\n"), 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeGlobalCopies removes marked copies even for agents that were uninstalled
+// since, so a deleted global skill never lingers anywhere.
+func (s *DiscoveryService) removeGlobalCopies(skillDirName string) error {
+	needsCopy := providersWithIndependentSkillCopy()
+	for _, adapter := range s.adapters {
+		if !needsCopy[adapter.Provider()] {
+			continue
+		}
+		destination := filepath.Join(adapter.UserSkillRoot(s.home), skillDirName)
+		if !isGlobalCopy(destination) {
+			continue
+		}
+		if err := os.RemoveAll(destination); err != nil {
+			return fmt.Errorf("remove global copy %s: %w", destination, err)
+		}
+	}
+	return nil
+}
+
+func isGlobalCopy(skillDir string) bool {
+	_, err := os.Stat(filepath.Join(skillDir, globalCopyMarker))
+	return err == nil
+}
+
 // propagateToProjectAgents copies a skill directory into every agent's canonical
 // project-level skill location so all supported agents can use it inside the project.
 // The source (`.agents/skills/<skill>`) remains the canonical copy and wins: existing

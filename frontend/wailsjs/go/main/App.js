@@ -45,3 +45,7 @@ export function SelectProjectFolder() {
 export function SetSkillInvocationMode(arg1, arg2) {
   return window['go']['main']['App']['SetSkillInvocationMode'](arg1, arg2);
 }
+
+export function SyncGlobalSkills() {
+  return window['go']['main']['App']['SyncGlobalSkills']();
+}

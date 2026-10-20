@@ -10,6 +10,48 @@ Initial providers:
 
 No provider assumptions should be added to the frontend or domain layers.
 
+## Which agents are shown
+
+Only agents whose executable is found are listed (a leftover config directory is
+not enough). Besides `PATH`, common install directories such as `~/.local/bin`,
+`~/.opencode/bin`, `/opt/homebrew/bin` and `/usr/local/bin` are searched, because
+the desktop app launched from Finder or a `.desktop` file does not inherit the
+login shell's `PATH` (see `internal/adapters/environment.go`).
+
+OpenCode is classified by each executable's `opencode --version` major number
+(`opencode` and its `opencode2` alias are both checked), and v1 and v2 appear as
+separate agents when both are installed. They share `~/.config/opencode/skills`, so
+a skill in that folder appears in both lanes but is one file: it is not flagged as
+duplicated, and deleting it removes it for both. OpenCode v2 identifies skills
+differently from v1 (confirmed with the 2.1.0 CLI's `GET /api/skill` against a
+scratch `HOME`):
+
+- it reads `~/.config/opencode/skill` (singular) in addition to `skills`;
+- a loose `<name>.md` directly in either root is a skill, not only `<name>/SKILL.md`;
+- folders are searched up to six levels deep, stopping at the first `SKILL.md`, and
+  hidden entries are ignored;
+- it still accepts the v1 `opencode.json` format (`permission.skill`,
+  `instructions`) and `commands/`, so invocation policies are written the same way.
+
+Copying a loose v2 skill to another agent turns it into `<name>/SKILL.md`.
+
+## Global scope
+
+The Global lane is `~/.agents/skills`, a skill there is available to every installed
+agent. Codex (confirmed with `codex debug prompt-input`, 0.162.0) and OpenCode v1/v2
+(confirmed with `GET /api/skill`, 2.1.0) read that directory natively. Claude Code
+does not, so when it is installed it gets a copy in `~/.claude/skills/<name>`
+marked with a `.agent-studio-global` file:
+
+- marked copies are hidden from the Claude Code lane, so the skill is listed once;
+- an existing, unmarked Claude skill with the same name is never overwritten: the
+  copy is refused before anything is written;
+- deleting the global skill removes its marked copies;
+- invocation policies for a global skill are written only to installed agents'
+  user-level configs;
+- **Sync to agents** creates copies for skills placed in `~/.agents/skills` outside
+  Agent Studio, refreshes stale ones, and covers agents installed later.
+
 ## Why only Claude gets a propagated copy
 
 Only Claude Code actually needs a physical, independent copy of a Project

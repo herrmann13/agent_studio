@@ -33,10 +33,12 @@ jobs:
           - runner: macos-15-intel
             arch: amd64
             binary_arch: x86_64
+            label: Intel
           - runner: macos-15
             arch: arm64
             binary_arch: arm64
-    name: macOS ${{ matrix.arch }}
+            label: Apple Silicon
+    name: macOS ${{ matrix.label }} (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     needs: validate-tag
     steps:
@@ -55,7 +57,9 @@ jobs:
         run: |
           test "$(lipo -archs build/bin/agent-studio.app/Contents/MacOS/agent-studio)" = "${{ matrix.binary_arch }}"
           mount_dir=$(mktemp -d)
-          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "dist/agent-studio-${RELEASE_TAG}-macos-${{ matrix.arch }}.dmg"
+          dmg="dist/agent-studio-${RELEASE_TAG}-macos-${{ matrix.arch }}.dmg"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$dmg"
+          [[ "$(diskutil info "$mount_dir")" == *"Volume Name:"*"Agent Studio (${{ matrix.label }})"* ]] || { echo "DMG volume name does not name ${{ matrix.label }}."; exit 1; }
           test -d "$mount_dir/agent-studio.app"
           test -L "$mount_dir/Applications"
           hdiutil detach "$mount_dir"
@@ -130,7 +134,29 @@ jobs:
           assets=(*.dmg *.deb *.AppImage)
           ((${#assets[@]} == 4)) || { echo "Expected two DMGs, one DEB, and one AppImage."; exit 1; }
           sha256sum "${assets[@]}" > SHA256SUMS
+      - name: Write download notes
+        run: |
+          cat > release-notes.md <<EOF
+          ## Downloads
+
+          | Platform | Installer |
+          | --- | --- |
+          | macOS — Apple Silicon (M1 or newer) | \`agent-studio-${RELEASE_TAG}-macos-arm64.dmg\` |
+          | macOS — Intel | \`agent-studio-${RELEASE_TAG}-macos-amd64.dmg\` |
+          | Linux — Debian/Ubuntu | \`agent-studio-${RELEASE_TAG}-linux-amd64.deb\` |
+          | Linux — any distribution | \`agent-studio-${RELEASE_TAG}-linux-amd64.AppImage\` |
+
+          Not sure which Mac you have? Open the Apple menu > About This Mac: **Chip: Apple M…** means Apple Silicon, **Processor: Intel** means Intel.
+          EOF
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$RELEASE_TAG" dist/* --generate-notes --verify-tag
+        # Asset file names keep the suffix the in-app updater matches; the
+        # `#label` is only the name shown on the release page.
+        run: |
+          gh release create "$RELEASE_TAG" --verify-tag --generate-notes --notes "$(cat release-notes.md)" \
+            "dist/agent-studio-${RELEASE_TAG}-macos-arm64.dmg#macOS — Apple Silicon (M1 or newer) · agent-studio-${RELEASE_TAG}-macos-arm64.dmg" \
+            "dist/agent-studio-${RELEASE_TAG}-macos-amd64.dmg#macOS — Intel · agent-studio-${RELEASE_TAG}-macos-amd64.dmg" \
+            "dist/agent-studio-${RELEASE_TAG}-linux-amd64.deb" \
+            "dist/agent-studio-${RELEASE_TAG}-linux-amd64.AppImage" \
+            dist/SHA256SUMS
