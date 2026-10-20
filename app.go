@@ -89,6 +89,11 @@ func (a *App) CopySkill(skillPath, targetScopeID string) (domain.DiscoveryResult
 	return a.discovery.CopySkill(skillPath, targetScopeID)
 }
 
+// SyncGlobalSkills copies Global skills to installed agents that cannot read them natively.
+func (a *App) SyncGlobalSkills() (domain.DiscoveryResult, error) {
+	return a.discovery.SyncGlobalSkills()
+}
+
 // DeleteSkill permanently removes a skill after the frontend obtains explicit confirmation.
 func (a *App) DeleteSkill(skillPath string) (domain.DiscoveryResult, error) {
 	return a.discovery.DeleteSkill(skillPath)

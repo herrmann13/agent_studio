@@ -17,7 +17,7 @@ func TestDiscoverClassifiesSkillStatesByScope(t *testing.T) {
 	writeFixture(t, filepath.Join(home, ".codex", "skills", "testing", "SKILL.md"), "---\nname: Testing\ndescription: Write focused tests.\n---\n")
 	writeFixture(t, filepath.Join(home, ".claude", "skills", "testing", "SKILL.md"), "---\nname: Testing\ndescription: Write focused tests.\n---\n")
 
-	result, err := NewDiscoveryService(home).Discover()
+	result, err := newTestService(home).Discover()
 	if err != nil {
 		t.Fatalf("Discover() error = %v", err)
 	}
@@ -36,7 +36,7 @@ func TestDiscoverClassifiesSkillStatesByScope(t *testing.T) {
 
 func TestCopyAndDeleteSkill(t *testing.T) {
 	home := t.TempDir()
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 	source := filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md")
 	writeFixture(t, source, "---\nname: testing\ndescription: Write focused tests.\n---\n")
 
@@ -68,7 +68,7 @@ func TestSkillInvocationModesSyncOpenCodeWithoutOverwritingUserCommand(t *testin
 	skillPath := filepath.Join(home, ".config", "opencode", "skills", "testing", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: testing\ndescription: Write focused tests.\n---\nFollow the test workflow.\n")
 	writeFixture(t, filepath.Join(home, ".config", "opencode", "opencode.json"), `{"permission":{"skill":{"testing":"deny"}}}`)
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	result, err := service.SetSkillInvocationMode(skillPath, "explicit")
 	if err != nil {
@@ -107,7 +107,7 @@ func TestSkillInvocationModesSyncClaude(t *testing.T) {
 	skillPath := filepath.Join(home, ".claude", "skills", "review", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
 	writeFixture(t, filepath.Join(home, ".claude", "settings.json"), `{"permissions":{"allow":[]}}`)
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err != nil {
 		t.Fatalf("Claude explicit mode error = %v", err)
@@ -137,7 +137,7 @@ func TestSkillInvocationModesSyncCodex(t *testing.T) {
 	skillPath := filepath.Join(home, ".codex", "skills", "review", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: review\ndescription: Review code.\n---\nReview the change.\n")
 	writeFixture(t, filepath.Join(home, ".codex", "config.toml"), "model = \"test\"\n")
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	if _, err := service.SetSkillInvocationMode(skillPath, "explicit"); err != nil {
 		t.Fatalf("Codex explicit mode error = %v", err)
@@ -174,12 +174,12 @@ func TestAddProjectTracksProjectSkillDirectory(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewDiscoveryService(home).AddProject(project)
+	result, err := newTestService(home).AddProject(project)
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
 	}
-	// opencode (agent), claude (agent), codex (agent), and the tracked project.
-	if len(result.Projects) != 1 || len(result.Scopes) != 4 {
+	// global, opencode (agent), claude (agent), codex (agent), and the tracked project.
+	if len(result.Projects) != 1 || len(result.Scopes) != 5 {
 		t.Fatalf("unexpected workspace = %#v", result)
 	}
 }
@@ -190,7 +190,7 @@ func TestCopySkillToProjectPropagatesOnlyToClaude(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	result, err := service.AddProject(project)
 	if err != nil {
@@ -235,7 +235,7 @@ func TestDeleteProjectSkillRemovesPropagatedCopies(t *testing.T) {
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	result, err := service.AddProject(project)
 	if err != nil {
@@ -276,7 +276,7 @@ func TestProjectSkillPublishesToClaudeInProject(t *testing.T) {
 	project := filepath.Join(home, "project")
 	skillPath := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")
 	writeFixture(t, skillPath, "---\nname: testing\ndescription: Write focused tests.\n---\nFollow the test workflow.\n")
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 
 	result, err := service.AddProject(project)
 	if err != nil {
@@ -307,7 +307,7 @@ func TestRemoveProjectStopsTrackingWithoutDeletingProjectFiles(t *testing.T) {
 	skill := filepath.Join(project, ".agents", "skills", "testing", "SKILL.md")
 	writeFixture(t, skill, "# Testing\n")
 
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 	result, err := service.AddProject(project)
 	if err != nil {
 		t.Fatalf("AddProject() error = %v", err)
@@ -337,7 +337,7 @@ func TestLoadProjectsIgnoresInvalidAndDuplicateEntries(t *testing.T) {
   {"id":"three","name":"Project three","path":"/projects/three"}
 ]`)
 
-	projects := NewDiscoveryService(home).loadProjects()
+	projects := newTestService(home).loadProjects()
 	if len(projects) != 2 {
 		t.Fatalf("projects = %#v, want only valid unique entries", projects)
 	}
@@ -491,7 +491,7 @@ func TestCopyDirectoryPreservesExecutablePermissions(t *testing.T) {
 // projects.json, append their own entry, and overwrite each other on save.
 func TestConcurrentAddProjectDoesNotLoseWrites(t *testing.T) {
 	home := t.TempDir()
-	service := NewDiscoveryService(home)
+	service := newTestService(home)
 	const projectCount = 20
 
 	var wg sync.WaitGroup

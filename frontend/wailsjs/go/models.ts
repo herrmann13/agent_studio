@@ -7,6 +7,7 @@ export namespace domain {
 	    status: string;
 	    configPath: string;
 	    commandPath?: string;
+	    version?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Agent(source);
@@ -20,6 +21,7 @@ export namespace domain {
 	        this.status = source["status"];
 	        this.configPath = source["configPath"];
 	        this.commandPath = source["commandPath"];
+	        this.version = source["version"];
 	    }
 	}
 	export class ConfigFile {
@@ -60,6 +62,7 @@ export namespace domain {
 	    kind: string;
 	    provider?: string;
 	    root: string;
+	    skillLayout?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Scope(source);
@@ -72,6 +75,7 @@ export namespace domain {
 	        this.kind = source["kind"];
 	        this.provider = source["provider"];
 	        this.root = source["root"];
+	        this.skillLayout = source["skillLayout"];
 	    }
 	}
 	export class Skill {

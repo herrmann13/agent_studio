@@ -85,6 +85,9 @@ func (s *DiscoveryService) InstallSkillFromURL(rawURL, targetScopeID string) (do
 	} else if !os.IsNotExist(err) {
 		return domain.SkillInstallResult{}, err
 	}
+	if err := s.checkGlobalCopyTargets(target, skillName); err != nil {
+		return domain.SkillInstallResult{}, err
+	}
 	if err := os.MkdirAll(target.Root, 0o755); err != nil {
 		return domain.SkillInstallResult{}, fmt.Errorf("create skill directory: %w", err)
 	}

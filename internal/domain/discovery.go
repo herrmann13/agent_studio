@@ -17,7 +17,13 @@ type Agent struct {
 	Status      string   `json:"status"`
 	ConfigPath  string   `json:"configPath"`
 	CommandPath string   `json:"commandPath,omitempty"`
+	Version     string   `json:"version,omitempty"`
 }
+
+// SkillLayoutOpenCodeV2 marks a scope whose skills follow OpenCode v2 discovery:
+// the root and its sibling `skill` directory are both read, `<name>/SKILL.md`
+// folders may be nested, and a loose `<name>.md` directly in a root is a skill too.
+const SkillLayoutOpenCodeV2 = "opencode-v2"
 
 // ConfigFile describes an existing, safe-to-display configuration file.
 type ConfigFile struct {
@@ -40,11 +46,12 @@ type Skill struct {
 
 // Scope is a physical skill directory managed by the workspace.
 type Scope struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Kind     string   `json:"kind"`
-	Provider Provider `json:"provider,omitempty"`
-	Root     string   `json:"root"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Provider    Provider `json:"provider,omitempty"`
+	Root        string   `json:"root"`
+	SkillLayout string   `json:"skillLayout,omitempty"`
 }
 
 // Project is a user-selected directory whose project skill location is tracked.

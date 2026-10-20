@@ -1,5 +1,5 @@
 import {Component, ErrorInfo, FormEvent, ReactNode, useEffect, useRef, useState} from 'react';
-import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder, SetSkillInvocationMode} from '../wailsjs/go/main/App';
+import {AddProject, CheckForUpdates, CopySkill, DeleteSkill, DiscoverLocalEnvironment, DownloadAndInstallUpdate, InstallSkillFromURL, RemoveProject, SelectProjectFolder, SetSkillInvocationMode, SyncGlobalSkills} from '../wailsjs/go/main/App';
 import {domain, update} from '../wailsjs/go/models';
 import claudeIcon from './assets/agents/Claude_AI_symbol.svg.webp';
 import codexIcon from './assets/agents/Codex Logo - Colored - zonalogo.com.svg';
@@ -83,6 +83,17 @@ function App() {
     function requestSkillDeletion(skill: domain.Skill) {
         setContextMenu(undefined);
         setPendingDeletion(skill);
+    }
+
+    async function syncGlobalSkills() {
+        try {
+            setWorkspace(normalizeWorkspace(await SyncGlobalSkills()));
+            setMessage('Global skills synced to every installed agent.');
+        } catch (error) {
+            // Skills without a conflict were still synced, so show them before the error.
+            await refresh();
+            setMessage(error instanceof Error ? error.message : String(error));
+        }
     }
 
     async function deleteSkill() {
@@ -184,7 +195,8 @@ function App() {
     }
 
     const scopes = workspace?.scopes ?? [];
-    const agentScopes = scopes.filter((scope) => scope.kind === 'agent');
+    // The Global lane leads the Agents section: a skill dropped there reaches every installed agent.
+    const agentScopes = scopes.filter((scope) => scope.kind === 'global' || scope.kind === 'agent');
     const projectScopes = scopes.filter((scope) => scope.kind === 'project');
 
     useEffect(() => {
@@ -212,7 +224,7 @@ function App() {
             <section className="workspace-section">
                 <SectionHeading title="Agents"/>
                 <div className="scope-grid">
-                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode}/>) }
+                    {agentScopes.map((scope) => <ScopeLane key={scope.id} scope={scope} skills={skillsInScope(workspace, scope.id)} draggedSkill={draggedSkill} pointerDropScopeID={pointerDropScopeID} onDragStart={setDraggedSkill} onDrop={dropSkill} onPointerTarget={setPointerDropScopeID} onPointerDrop={dropSkillByID} onContextMenu={openContextMenu} onModeChange={changeSkillMode} onSyncGlobal={scope.kind === 'global' ? () => void syncGlobalSkills() : undefined}/>) }
                 </div>
             </section>
 
@@ -242,12 +254,12 @@ function App() {
             /> : null}
             {isInstallDialogOpen ? <InstallSkillDialog url={skillURL} targetID={skillTargetID} scopes={scopes} isInstalling={isInstalling} onURLChange={setSkillURL} onTargetChange={setSkillTargetID} onSubmit={installFromURL} onClose={() => { if (!isInstalling) setIsInstallDialogOpen(false); }}/> : null}
             {availableUpdate ? <UpdateDialog update={availableUpdate} isUpdating={isUpdating} onInstall={() => void installUpdate()} onClose={() => { if (!isUpdating) setAvailableUpdate(undefined); }}/> : null}
-            {pendingDeletion ? <DeleteSkillDialog skill={pendingDeletion} isDeleting={isDeleting} onDelete={() => void deleteSkill()} onClose={() => { if (!isDeleting) setPendingDeletion(undefined); }}/> : null}
+            {pendingDeletion ? <DeleteSkillDialog skill={pendingDeletion} sharedWith={scopesSharingSkill(workspace, pendingDeletion)} isDeleting={isDeleting} onDelete={() => void deleteSkill()} onClose={() => { if (!isDeleting) setPendingDeletion(undefined); }}/> : null}
         </main>
     );
 }
 
-function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, onDragStart, onDrop, onPointerTarget, onPointerDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill}: {
+function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, onDragStart, onDrop, onPointerTarget, onPointerDrop, onContextMenu, onModeChange, onRemoveProject, onAddSkill, onSyncGlobal}: {
     scope: domain.Scope;
     project?: domain.Project;
     skills: domain.Skill[];
@@ -261,6 +273,7 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
     onModeChange: (skill: domain.Skill, mode: string) => void;
     onRemoveProject?: () => void;
     onAddSkill?: () => void;
+    onSyncGlobal?: () => void;
 }) {
     const [isDropTarget, setIsDropTarget] = useState(false);
     const [expandedSkills, setExpandedSkills] = useState<Set<string>>(new Set());
@@ -327,7 +340,7 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
         onDrop={(event) => { event.preventDefault(); setIsDropTarget(false); onDrop(scope); }}
     >
         <div className="scope-heading">
-            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : 'P'}</span><strong>{scope.name}</strong></div>
+            <div><span className={`scope-icon ${scope.kind}`}>{iconSource ? <img src={iconSource} alt=""/> : scope.kind === 'global' ? 'G' : 'P'}</span><strong>{scope.name}</strong></div>
             <div className="scope-actions">
                 <span>{skills.length}</span>
                 {scope.kind === 'project' && onRemoveProject ? <div className="project-menu-wrap">
@@ -336,8 +349,9 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
                 </div> : null}
             </div>
         </div>
-        <p className="scope-kind">{scope.kind === 'project' ? 'Project skills' : 'Agent skills'}</p>
+        <p className="scope-kind">{scopeKindLabel(scope)}</p>
         {project ? <code className="project-path" title={project.path}>{project.path}</code> : null}
+        {onSyncGlobal ? <button className="sync-global-button" type="button" title="Copy Global skills to installed agents that cannot read ~/.agents/skills" onClick={onSyncGlobal}>Sync to agents</button> : null}
         {scope.kind === 'project' && onRemoveProject ? <button className="stop-tracking-button" type="button" onClick={onRemoveProject}>Stop tracking</button> : null}
         <div className="skill-stack">
             {skills.map((skill) => {
@@ -362,10 +376,17 @@ function ScopeLane({scope, project, skills, draggedSkill, pointerDropScopeID, on
     </section>;
 }
 
+function scopeKindLabel(scope: domain.Scope) {
+    if (scope.kind === 'global') return 'Available to every installed agent';
+    if (scope.kind === 'project') return 'Project skills';
+    return 'Agent skills';
+}
+
 function scopeIcon(scope: domain.Scope) {
-    if (scope.id === 'claude') return claudeIcon;
-    if (scope.id === 'codex') return codexIcon;
-    if (scope.id === 'opencode') return openCodeIcon;
+    if (scope.kind !== 'agent') return undefined;
+    if (scope.provider === 'claude') return claudeIcon;
+    if (scope.provider === 'codex') return codexIcon;
+    if (scope.provider === 'opencode') return openCodeIcon;
     return undefined;
 }
 
@@ -442,8 +463,9 @@ function UpdateDialog({update, isUpdating, onInstall, onClose}: {
     </div>;
 }
 
-function DeleteSkillDialog({skill, isDeleting, onDelete, onClose}: {
+function DeleteSkillDialog({skill, sharedWith, isDeleting, onDelete, onClose}: {
     skill: domain.Skill;
+    sharedWith: domain.Scope[];
     isDeleting: boolean;
     onDelete: () => void;
     onClose: () => void;
@@ -451,11 +473,18 @@ function DeleteSkillDialog({skill, isDeleting, onDelete, onClose}: {
     return <div className="modal-backdrop" role="presentation" onClick={onClose}>
         <section className="delete-modal" role="dialog" aria-modal="true" aria-labelledby="delete-skill-title" onClick={(event) => event.stopPropagation()}>
             <div className="modal-heading"><h2 id="delete-skill-title">Delete {skill.name}?</h2><button className="modal-close" type="button" aria-label="Close" onClick={onClose} disabled={isDeleting}>×</button></div>
-            <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>
+            {sharedWith.length ? <p>This file is shared by {sharedWith.map((scope) => scope.name).join(' and ')}, so it is removed from all of them. Copies elsewhere are not affected.</p> : <p>This permanently removes only this copy. Copies in other agents or projects are not affected.</p>}
             <code title={skill.path}>{skill.path}</code>
             <div className="install-dialog-actions"><button type="button" className="modal-secondary" onClick={onClose} disabled={isDeleting}>Cancel</button><button type="button" className="delete-confirm" onClick={onDelete} disabled={isDeleting}>{isDeleting ? 'Deleting...' : 'Delete skill'}</button></div>
         </section>
     </div>;
+}
+
+// Agents that read the same skill directory (OpenCode v1 and v2) list the same file.
+function scopesSharingSkill(workspace: domain.DiscoveryResult | undefined, skill: domain.Skill) {
+    const scopeIDs = new Set(workspace?.skills.filter((item) => item.path === skill.path).map((item) => item.scopeId));
+    if (scopeIDs.size < 2) return [];
+    return workspace?.scopes.filter((scope) => scopeIDs.has(scope.id)) ?? [];
 }
 
 function skillsInScope(workspace: domain.DiscoveryResult | undefined, scopeID: string) {

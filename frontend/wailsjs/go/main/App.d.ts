@@ -24,3 +24,5 @@ export function RemoveProject(arg1:string):Promise<domain.DiscoveryResult>;
 export function SelectProjectFolder():Promise<string>;
 
 export function SetSkillInvocationMode(arg1:string,arg2:string):Promise<domain.DiscoveryResult>;
+
+export function SyncGlobalSkills():Promise<domain.DiscoveryResult>;

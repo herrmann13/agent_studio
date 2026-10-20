@@ -6,8 +6,8 @@ WAILS="${WAILS:-$(go env GOPATH)/bin/wails}"
 MACHINE_ARCH="$(uname -m)"
 
 case "$MACHINE_ARCH" in
-  arm64) ARCH="arm64" ;;
-  x86_64) ARCH="amd64" ;;
+  arm64) ARCH="arm64"; ARCH_LABEL="Apple Silicon" ;;
+  x86_64) ARCH="amd64"; ARCH_LABEL="Intel" ;;
   *) echo "Unsupported macOS architecture: $MACHINE_ARCH"; exit 1 ;;
 esac
 
@@ -17,4 +17,6 @@ staging_dir="$(mktemp -d)"
 trap 'rm -rf "$staging_dir"' EXIT
 cp -R "build/bin/agent-studio.app" "$staging_dir/agent-studio.app"
 ln -s /Applications "$staging_dir/Applications"
-hdiutil create -volname "Agent Studio" -srcfolder "$staging_dir" -ov -format UDZO "dist/agent-studio-${VERSION}-macos-${ARCH}.dmg"
+# The file name keeps the `-macos-<arch>.dmg` suffix the in-app updater matches;
+# the volume name tells the two builds apart once the DMG is opened.
+hdiutil create -volname "Agent Studio (${ARCH_LABEL})" -srcfolder "$staging_dir" -ov -format UDZO "dist/agent-studio-${VERSION}-macos-${ARCH}.dmg"

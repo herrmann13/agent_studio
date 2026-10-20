@@ -2,34 +2,36 @@ package claude
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 
+	"agent-studio/internal/adapters"
 	"agent-studio/internal/domain"
 )
 
 type Adapter struct{}
 
-func (Adapter) Detect(home string) (domain.Agent, *domain.ConfigFile) {
-	configPath := filepath.Join(home, ".claude", "settings.json")
-	commandPath, _ := exec.LookPath("claude")
-	_, err := os.Stat(configPath)
-	status := "not found"
+func (Adapter) Detect(env adapters.Environment) []adapters.Installation {
+	commandPath := env.FindCommand("claude")
+	if commandPath == "" {
+		return nil
+	}
+	configPath := filepath.Join(env.Home, ".claude", "settings.json")
+	status := "installed"
 	var config *domain.ConfigFile
-	if err == nil {
+	if _, err := os.Stat(configPath); err == nil {
 		status = "configured"
 		config = &domain.ConfigFile{Provider: domain.ProviderClaude, Path: configPath, Scope: "global"}
-	} else if commandPath != "" {
-		status = "installed"
 	}
-
-	return domain.Agent{ID: "claude", Name: "Claude Code", Provider: domain.ProviderClaude, Status: status, ConfigPath: configPath, CommandPath: commandPath}, config
+	agent := domain.Agent{ID: "claude", Name: "Claude Code", Provider: domain.ProviderClaude, Status: status, ConfigPath: configPath, CommandPath: commandPath}
+	return []adapters.Installation{{
+		Agent:  agent,
+		Config: config,
+		Scope:  domain.Scope{ID: agent.ID, Name: agent.Name, Kind: "agent", Provider: agent.Provider, Root: Adapter{}.UserSkillRoot(env.Home)},
+	}}
 }
 
-func (Adapter) SkillRoots(home string) []string {
-	return []string{
-		filepath.Join(home, ".claude", "skills"),
-	}
+func (Adapter) UserSkillRoot(home string) string {
+	return filepath.Join(home, ".claude", "skills")
 }
 
 func (Adapter) ProjectSkillRoot(projectPath string) string {
