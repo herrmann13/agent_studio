@@ -12,6 +12,17 @@ Agent Studio gives you a single visual overview of every skill you have configur
 
 Everything runs locally. No cloud, no accounts, no telemetry.
 
+## Terminal interface
+
+`agstudio` is the keyboard-first terminal interface. It uses the same local configuration and safety rules as the desktop app.
+
+```sh
+make build-tui
+./build/bin/agstudio
+```
+
+Use `Tab` to move between scopes and skills, arrow keys or `j`/`k` to navigate, and the footer shortcuts to copy, delete, install skills, change invocation modes, and manage projects.
+
 ## Screenshots
 
 <!-- TODO: add a screenshot showing the workspace overview (agents + skills) -->
@@ -57,9 +68,11 @@ Agent Studio is built with Go, Wails, and React. The root `Makefile` is the supp
 ```sh
 make setup    # Verify Go, Bun, and Wails; install locked dependencies.
 make dev      # Start the desktop app with hot reload.
+make dev-tui  # Start the terminal interface.
 make test     # Build the frontend and run Go tests.
 make check    # Run tests and validate formatting.
 make build    # Build the production app for the current platform.
+make build-tui # Build the terminal interface.
 make package  # Create a .dmg on macOS or .deb on Linux.
 ```
 
