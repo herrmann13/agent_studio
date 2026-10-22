@@ -116,8 +116,48 @@ jobs:
           path: dist/agent-studio-${{ env.RELEASE_TAG }}-linux-amd64.AppImage
           if-no-files-found: error
 
+  package-cli:
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            goos: darwin
+            arch: arm64
+          - runner: macos-15-intel
+            goos: darwin
+            arch: amd64
+          - runner: ubuntu-24.04
+            goos: linux
+            arch: amd64
+          - runner: ubuntu-24.04
+            goos: linux
+            arch: arm64
+    name: CLI ${{ matrix.goos }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    needs: validate-tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.x'
+      - name: Build CLI archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir -p dist/stage
+          go build -trimpath -ldflags "-X main.version=$RELEASE_TAG" -o dist/stage/agstudio ./cmd/agstudio
+          archive="agstudio-${RELEASE_TAG}-${GOOS}-${GOARCH}.tar.gz"
+          tar -czf "dist/$archive" -C dist/stage agstudio
+          test -s "dist/$archive"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.goos }}-${{ matrix.arch }}
+          path: dist/agstudio-${{ env.RELEASE_TAG }}-${{ matrix.goos }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
   publish:
-    needs: [package-macos, package-linux]
+    needs: [package-macos, package-linux, package-cli]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -131,8 +171,8 @@ jobs:
         run: |
           cd dist
           shopt -s nullglob
-          assets=(*.dmg *.deb *.AppImage)
-          ((${#assets[@]} == 4)) || { echo "Expected two DMGs, one DEB, and one AppImage."; exit 1; }
+          assets=(*.dmg *.deb *.AppImage *.tar.gz)
+          ((${#assets[@]} == 8)) || { echo "Expected four desktop installers and four CLI archives."; exit 1; }
           sha256sum "${assets[@]}" > SHA256SUMS
       - name: Write download notes
         run: |
@@ -145,6 +185,17 @@ jobs:
           | macOS — Intel | \`agent-studio-${RELEASE_TAG}-macos-amd64.dmg\` |
           | Linux — Debian/Ubuntu | \`agent-studio-${RELEASE_TAG}-linux-amd64.deb\` |
           | Linux — any distribution | \`agent-studio-${RELEASE_TAG}-linux-amd64.AppImage\` |
+
+          ## CLI
+
+          Install the prebuilt terminal interface with Homebrew:
+
+          \`\`\`sh
+          brew tap herrmann13/agent_studio https://github.com/herrmann13/agent_studio
+          brew install herrmann13/agent_studio/agstudio
+          \`\`\`
+
+          CLI archives for macOS (Apple Silicon and Intel) and Linux (ARM64 and x86-64) are attached below.
 
           Not sure which Mac you have? Open the Apple menu > About This Mac: **Chip: Apple M…** means Apple Silicon, **Processor: Intel** means Intel.
           EOF
@@ -159,4 +210,34 @@ jobs:
             "dist/agent-studio-${RELEASE_TAG}-macos-amd64.dmg#macOS — Intel · agent-studio-${RELEASE_TAG}-macos-amd64.dmg" \
             "dist/agent-studio-${RELEASE_TAG}-linux-amd64.deb" \
             "dist/agent-studio-${RELEASE_TAG}-linux-amd64.AppImage" \
+            "dist/agstudio-${RELEASE_TAG}-darwin-arm64.tar.gz" \
+            "dist/agstudio-${RELEASE_TAG}-darwin-amd64.tar.gz" \
+            "dist/agstudio-${RELEASE_TAG}-linux-arm64.tar.gz" \
+            "dist/agstudio-${RELEASE_TAG}-linux-amd64.tar.gz" \
             dist/SHA256SUMS
+
+  update-homebrew-formula:
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          path: dist
+          merge-multiple: true
+      - name: Generate Homebrew formula
+        run: bash scripts/generate-homebrew-formula.sh "$RELEASE_TAG" dist
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ github.token }}
+          commit-message: "chore: update Homebrew formula for ${{ env.RELEASE_TAG }}"
+          title: "chore: update Homebrew formula for ${{ env.RELEASE_TAG }}"
+          body: "Updates the prebuilt CLI version and checksums in the Homebrew formula."
+          branch: homebrew/agstudio
+          delete-branch: true

@@ -14,15 +14,16 @@ Everything runs locally. No cloud, no accounts, no telemetry.
 
 ## Terminal interface
 
-`agstudio` is the keyboard-first terminal interface. It uses the same local configuration and safety rules as the desktop app.
-
-Install it directly with Go 1.25 or newer:
+`agstudio` is the keyboard-first terminal interface. It uses the same local configuration and safety rules as the desktop app. Install the prebuilt CLI on macOS or Linux with Homebrew (no Go installation required):
 
 ```sh
-go install github.com/herrmann13/agent_studio/cmd/agstudio@latest
+brew tap herrmann13/agent_studio https://github.com/herrmann13/agent_studio
+brew install herrmann13/agent_studio/agstudio
 ```
 
-Ensure `$(go env GOPATH)/bin` is in your `PATH`, then run `agstudio`. Re-run the install command to update it.
+Run `agstudio` to open the terminal interface and `brew upgrade agstudio` to update it. The Homebrew formula is updated for each release; if its update PR is still open, merge that PR before installing the new release.
+
+Prebuilt archives for macOS (Apple Silicon and Intel) and Linux (ARM64 and x86-64) are also attached to each GitHub release for manual installation.
 
 To build from a local checkout:
 
