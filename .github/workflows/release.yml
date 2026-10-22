@@ -221,7 +221,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-      pull-requests: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -233,11 +232,13 @@ jobs:
           merge-multiple: true
       - name: Generate Homebrew formula
         run: bash scripts/generate-homebrew-formula.sh "$RELEASE_TAG" dist
-      - uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ github.token }}
-          commit-message: "chore: update Homebrew formula for ${{ env.RELEASE_TAG }}"
-          title: "chore: update Homebrew formula for ${{ env.RELEASE_TAG }}"
-          body: "Updates the prebuilt CLI version and checksums in the Homebrew formula."
-          branch: homebrew/agstudio
-          delete-branch: true
+      - name: Commit Homebrew formula directly to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/agstudio.rb
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git commit -m "chore: update Homebrew formula for $RELEASE_TAG"
+          git push origin HEAD:main

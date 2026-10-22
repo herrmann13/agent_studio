@@ -21,7 +21,7 @@ brew tap herrmann13/agent_studio https://github.com/herrmann13/agent_studio
 brew install herrmann13/agent_studio/agstudio
 ```
 
-Run `agstudio` to open the terminal interface and `brew upgrade agstudio` to update it. The Homebrew formula is updated for each release; if its update PR is still open, merge that PR before installing the new release.
+Run `agstudio` to open the terminal interface and `brew upgrade agstudio` to update it. The release workflow updates the Homebrew formula directly on `main` after publishing each release.
 
 Prebuilt archives for macOS (Apple Silicon and Intel) and Linux (ARM64 and x86-64) are also attached to each GitHub release for manual installation.
 
